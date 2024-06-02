@@ -5,7 +5,7 @@
 
 // Vertex Shader source code
 const char* vertexShaderSource = R"(
-#version 330 core
+#version 430 core
 layout (location = 0) in vec3 aPos;
 void main()
 {
@@ -15,11 +15,63 @@ void main()
 
 // Fragment Shader source code
 const char* fragmentShaderSource = R"(
-#version 330 core
+#version 430 core
 out vec4 FragColor;
+
+uniform vec2 iResolution;
+uniform float iTime;
+
+float sphereSDF(vec3 p, float r) {
+    return length(p) - r;
+}
+
+float sceneSDF(vec3 p) {
+    return sphereSDF(p, 1.0);
+}
+
+vec3 getNormal(vec3 p) {
+    float d = 0.0001;
+    vec3 n;
+    n.x = sceneSDF(p + vec3(d, 0.0, 0.0)) - sceneSDF(p - vec3(d, 0.0, 0.0));
+    n.y = sceneSDF(p + vec3(0.0, d, 0.0)) - sceneSDF(p - vec3(0.0, d, 0.0));
+    n.z = sceneSDF(p + vec3(0.0, 0.0, d)) - sceneSDF(p - vec3(0.0, 0.0, d));
+    return normalize(n);
+}
+
+float raymarch(vec3 ro, vec3 rd) {
+    float t = 0.0;
+    for (int i = 0; i < 100; i++) {
+        vec3 p = ro + rd * t;
+        float d = sceneSDF(p);
+        if (d < 0.001) {
+            return t;
+        }
+        t += d;
+    }
+    return -1.0;
+}
+
 void main()
 {
-    FragColor = vec4(1.0, 0.5, 0.2, 1.0); // Set the color to orange
+    vec2 uv = (gl_FragCoord.xy / iResolution.xy) * 2.0 - 1.0;
+    uv.x *= iResolution.x / iResolution.y;  // Adjust for aspect ratio
+
+    vec3 ro = vec3(0.0, 0.0, 3.0);
+    vec3 rd = normalize(vec3(uv, -1.0));
+
+    float t = raymarch(ro, rd);
+    vec3 color = vec3(0.0);
+
+    if (t > 0.0) {
+        vec3 p = ro + rd * t;
+        vec3 normal = getNormal(p);
+        vec3 lightDir = normalize(vec3(0.3, 1.0, 0.5));  // Change the light direction to come from the side
+        float diff = max(dot(normal, lightDir), 0.0);
+        vec3 ambient = vec3(0.1, 0.1, 0.1);  // Add ambient light
+        color = vec3(1.0, 0.5, 0.2) * diff + ambient;
+    }
+
+    FragColor = vec4(color, 1.0);
 }
 )";
 
@@ -31,10 +83,10 @@ int main() {
     }
 
     // Create a GLFW window
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-    GLFWwindow* window = glfwCreateWindow(800, 600, "OpenGL Basic Application", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(2560, 1080, "OpenGL Raymarching", nullptr, nullptr);
     if (!window) {
         std::cerr << "Failed to create GLFW window" << std::endl;
         glfwTerminate();
@@ -50,7 +102,7 @@ int main() {
     }
 
     // Define the viewport dimensions
-    glViewport(0, 0, 800, 600);
+    glViewport(0, 0, 2560, 1080);
 
     // Build and compile the shader program
     // Vertex Shader
@@ -96,9 +148,10 @@ int main() {
 
     // Set up vertex data (and buffer(s)) and configure vertex attributes
     float vertices[] = {
-        -0.5f, -0.5f, 0.0f,
-         0.5f, -0.5f, 0.0f,
-         0.0f,  0.5f, 0.0f
+        -1.0f, -1.0f, 0.0f,
+         1.0f, -1.0f, 0.0f,
+        -1.0f,  1.0f, 0.0f,
+         1.0f,  1.0f, 0.0f,
     };
 
     GLuint VBO, VAO;
@@ -117,6 +170,7 @@ int main() {
     glBindVertexArray(0);
 
     // Render loop
+    // Render loop
     while (!glfwWindowShouldClose(window)) {
         // Input
         if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
@@ -126,21 +180,23 @@ int main() {
         glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
 
-        // Draw the triangle
+        // Draw the quad
         glUseProgram(shaderProgram);
+
+        // Pass uniform variables
+        int iResolutionLocation = glGetUniformLocation(shaderProgram, "iResolution");
+        int width, height;
+        glfwGetFramebufferSize(window, &width, &height);
+        glUniform2f(iResolutionLocation, (float)width, (float)height);
+
+        int iTimeLocation = glGetUniformLocation(shaderProgram, "iTime");
+        glUniform1f(iTimeLocation, (float)glfwGetTime());
+
         glBindVertexArray(VAO);
-        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
         // Swap buffers and poll IO events
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
-
-    // Clean up
-    glDeleteVertexArrays(1, &VAO);
-    glDeleteBuffers(1, &VBO);
-    glDeleteProgram(shaderProgram);
-
-    glfwTerminate();
-    return 0;
 }
