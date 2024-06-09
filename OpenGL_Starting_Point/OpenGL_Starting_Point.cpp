@@ -62,12 +62,14 @@ struct AABB {
 struct Mesh {
     unsigned int VAO, VBO, EBO;
     std::vector<unsigned int> indices;
+    int meshBufferIndex;
 };
 
 unsigned int characterShaderProgram;
 unsigned int characterTexture;
 unsigned int characterNormalMap;
 unsigned int cubemapTexture;
+unsigned int visorCubemapTexture;
 unsigned int characterMaskTexture;
 
 std::vector<Vertex> aggregatedVertices; // Global vector to hold all vertices of the model
@@ -79,7 +81,7 @@ const float staticNodeRotationAngle = glm::radians(-90.0f);
 
 // Method declarations
 void loadModel(const std::string& path);
-void storeMesh(const std::vector<Vertex>& vertices, const std::vector<unsigned int>& indices);
+void storeMesh(const std::vector<Vertex>& vertices, const std::vector<unsigned int>& indices, int meshBufferIndex);
 void processNode(aiNode* node, const aiScene* scene);
 void processMesh(aiMesh* mesh, const aiScene* scene, const aiMatrix4x4& nodeTransformation);
 AABB computeAABB(const std::vector<Vertex>& vertices);
@@ -126,7 +128,7 @@ void loadModel(const std::string& path) {
     loadedModelAABB = computeAABB(aggregatedVertices);
 }
 
-void storeMesh(const std::vector<Vertex>& vertices, const std::vector<unsigned int>& indices) {
+void storeMesh(const std::vector<Vertex>& vertices, const std::vector<unsigned int>& indices, int meshBufferIndex) {
     Mesh mesh;
 
     glGenVertexArrays(1, &mesh.VAO);
@@ -171,6 +173,7 @@ void storeMesh(const std::vector<Vertex>& vertices, const std::vector<unsigned i
 
     glBindVertexArray(0);
 
+    mesh.meshBufferIndex = meshBufferIndex;
     mesh.indices = indices;
     loadedMeshes.push_back(mesh);
 }
@@ -247,7 +250,11 @@ void processMesh(aiMesh* mesh, const aiScene* scene, const aiMatrix4x4& nodeTran
     aggregatedVertices.insert(aggregatedVertices.end(), vertices.begin(), vertices.end());
 
     // Store the processed mesh
-    storeMesh(vertices, indices);
+    int meshBufferIndex = 0;
+    if (mesh->mName.C_Str() == std::string("helmet:visor:LOD0")) {
+        meshBufferIndex = 1;
+    }
+    storeMesh(vertices, indices, meshBufferIndex);
 }
 
 // Function to compute AABB
@@ -496,7 +503,6 @@ unsigned int createShaderProgram(unsigned int vertexShader, unsigned int fragmen
 unsigned int loadTexture(const char* path) {
     unsigned int textureID;
     glGenTextures(1, &textureID);
-
     int width, height, nrComponents;
     unsigned char* data = stbi_load(path, &width, &height, &nrComponents, 0);
     if (data) {
@@ -507,23 +513,19 @@ unsigned int loadTexture(const char* path) {
             format = GL_RGB;
         else if (nrComponents == 4)
             format = GL_RGBA;
-
         glBindTexture(GL_TEXTURE_2D, textureID);
         glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
         glGenerateMipmap(GL_TEXTURE_2D);
-
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
         stbi_image_free(data);
     }
     else {
         std::cerr << "Texture failed to load at path: " << path << std::endl;
         stbi_image_free(data);
     }
-
     return textureID;
 }
 
@@ -622,7 +624,7 @@ const char* characterFragmentShaderSource = R"(
             vec4 diffuseTexture = texture(texture_diffuse, TexCoord);
             vec3 diffuseTexColor = diffuseTexture.rgb;
             float alphaValue = diffuseTexture.a;
-            float blendFactor = 0.3f;
+            float blendFactor = 0.2f;
 
             vec3 maskValue = texture(texture_mask, TexCoord).rgb;
             vec3 blendedColor = mix(diffuseTexColor, diffuseTexColor * changeColor, maskValue);
@@ -653,7 +655,7 @@ const char* characterFragmentShaderSource = R"(
 
             vec3 reflectedColor = texture(cubemap, ReflectDir).rgb;
             reflectedColor *= specularMask;
-            color = mix(color, reflectedColor, 0.3f);
+            color = mix(color, reflectedColor, 0.25f);
 
             FragColor = vec4(color, 1.0f);
         }
@@ -775,8 +777,9 @@ int main() {
     initShaders();
 
     // Load the model and textures
-    std::string staticModelPath = FileSystemUtils::getAssetFilePath("models/combat_br_idle.fbx");
+    std::string staticModelPath = FileSystemUtils::getAssetFilePath("models/masterchief_unarmed_idle.fbx");
     loadModel(staticModelPath);
+    std::cout << "Loaded " << loadedMeshes.size() << " meshes." << std::endl;
 
     characterTexture = loadTexture(FileSystemUtils::getAssetFilePath("textures/masterchief_D.tga").c_str());
     characterNormalMap = loadTexture(FileSystemUtils::getAssetFilePath("textures/masterchief_bump.tga").c_str());
@@ -792,6 +795,17 @@ int main() {
     };
 
     cubemapTexture = loadCubemap(faces);
+
+    std::vector<std::string> visorfaces{
+    FileSystemUtils::getAssetFilePath("textures/cubemaps/mirror_surface_right.tga"),
+    FileSystemUtils::getAssetFilePath("textures/cubemaps/mirror_surface_left.tga"),
+    FileSystemUtils::getAssetFilePath("textures/cubemaps/mirror_surface_up.tga"),
+    FileSystemUtils::getAssetFilePath("textures/cubemaps/mirror_surface_down.tga"),
+    FileSystemUtils::getAssetFilePath("textures/cubemaps/mirror_surface_front.tga"),
+    FileSystemUtils::getAssetFilePath("textures/cubemaps/mirror_surface_back.tga")
+    };
+
+    visorCubemapTexture = loadCubemap(visorfaces);
 
     // Set the random color once
     glm::vec3 randomColor = getRandomColor();
@@ -837,7 +851,7 @@ int main() {
         glm::vec3 diffuseColor = glm::vec3(1.0f, 1.0f, 1.0f);
         glm::vec3 specularColor = glm::vec3(0.4f, 0.4f, 0.4f);
         float shininess = 32.0f;
-        float lightIntensity = 1.0f;
+        float lightIntensity = 1.25f;
 
         glUniform3fv(glGetUniformLocation(characterShaderProgram, "lightDir"), 1, glm::value_ptr(lightDir));
         glUniform3fv(glGetUniformLocation(characterShaderProgram, "viewPos"), 1, glm::value_ptr(viewPos));
@@ -878,6 +892,17 @@ int main() {
 
         // Render the meshes
         for (const auto& mesh : loadedMeshes) {
+            if (mesh.meshBufferIndex == 0) {
+                glActiveTexture(GL_TEXTURE3);
+                glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture);
+                glUniform1i(glGetUniformLocation(characterShaderProgram, "cubemap"), 3);
+            }
+            else if (mesh.meshBufferIndex == 1) {
+                glActiveTexture(GL_TEXTURE3);
+                glBindTexture(GL_TEXTURE_CUBE_MAP, visorCubemapTexture);
+                glUniform1i(glGetUniformLocation(characterShaderProgram, "cubemap"), 3);
+            }
+
             glBindVertexArray(mesh.VAO);
             glDrawElements(GL_TRIANGLES, mesh.indices.size(), GL_UNSIGNED_INT, 0);
         }
