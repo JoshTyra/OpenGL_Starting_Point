@@ -235,7 +235,7 @@ const char* characterFragmentShaderSource = R"(
             vec4 diffuseTexture = texture(texture_diffuse, TexCoord);
             vec3 diffuseTexColor = diffuseTexture.rgb;
             float alphaValue = diffuseTexture.a;
-            float blendFactor = 0.2f;
+            float blendFactor = 0.25f;
 
             vec3 maskValue = texture(texture_mask, TexCoord).rgb;
             vec3 blendedColor = mix(diffuseTexColor, diffuseTexColor * changeColor, maskValue);
@@ -266,7 +266,7 @@ const char* characterFragmentShaderSource = R"(
 
             vec3 reflectedColor = texture(cubemap, ReflectDir).rgb;
             reflectedColor *= specularMask;
-            color = mix(color, reflectedColor, 0.25f);
+            color = mix(color, reflectedColor, 0.3f);
 
             FragColor = vec4(color, 1.0f);
         }
@@ -388,7 +388,7 @@ int main() {
     initShaders();
 
     // Load the model and textures
-    std::string staticModelPath = FileSystemUtils::getAssetFilePath("models/masterchief_unarmed_idle.fbx");
+    std::string staticModelPath = FileSystemUtils::getAssetFilePath("models/combat_sword_idle.fbx");
 
     // Load the model
     modelLoader.loadModel(staticModelPath);
@@ -437,7 +437,7 @@ int main() {
             glfwSetWindowShouldClose(window, true);
 
         // Clear the color buffer
-        glClearColor(0.2f, 0.2f, 0.2f, 1.0f);
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         // Update camera matrices
