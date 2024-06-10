@@ -1,0 +1,83 @@
+#pragma once
+#ifndef MODELLOADER_H
+#define MODELLOADER_H
+
+#include <GL/glew.h>
+#include <assimp/Importer.hpp>
+#include <assimp/scene.h>
+#include <assimp/postprocess.h>
+#include <vector>
+#include <map>
+#include <string>
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
+#include <glm/gtx/string_cast.hpp>
+#include <iostream>
+
+struct Vertex {
+    glm::vec3 Position;
+    glm::vec2 TexCoord;
+    glm::vec3 Normal;
+    glm::vec3 Tangent;
+    glm::vec3 Bitangent;
+    glm::ivec4 BoneIDs;
+    glm::vec4 Weights;
+};
+
+struct BoneInfo {
+    glm::mat4 BoneOffset;
+    glm::mat4 FinalTransformation;
+
+    BoneInfo() : BoneOffset(1.0f), FinalTransformation(1.0f) {}
+};
+
+struct AABB {
+    glm::vec3 min;
+    glm::vec3 max;
+};
+
+struct Mesh {
+    unsigned int VAO, VBO, EBO;
+    std::vector<unsigned int> indices;
+    int meshBufferIndex;
+};
+
+class ModelLoader {
+public:
+    ModelLoader();
+    ~ModelLoader();
+
+    void loadModel(const std::string& path);
+    void updateBoneTransforms(float timeInSeconds);
+    const std::vector<Mesh>& getLoadedMeshes() const;
+    const AABB& getLoadedModelAABB() const;
+    const std::vector<glm::mat4>& getBoneTransforms() const;
+
+private:
+    void processNode(aiNode* node, const aiScene* scene);
+    void processMesh(aiMesh* mesh, const aiScene* scene, const aiMatrix4x4& nodeTransformation);
+    void storeMesh(const std::vector<Vertex>& vertices, const std::vector<unsigned int>& indices, int meshBufferIndex);
+    void readNodeHierarchy(float animationTime, const aiNode* node, const glm::mat4& parentTransform);
+    const aiNodeAnim* findNodeAnim(const aiAnimation* animation, const std::string nodeName);
+    void calcInterpolatedScaling(aiVector3D& out, float animationTime, const aiNodeAnim* nodeAnim);
+    void calcInterpolatedRotation(aiQuaternion& out, float animationTime, const aiNodeAnim* nodeAnim);
+    void calcInterpolatedPosition(aiVector3D& out, float animationTime, const aiNodeAnim* nodeAnim);
+    unsigned int findScaling(float animationTime, const aiNodeAnim* nodeAnim);
+    unsigned int findRotation(float animationTime, const aiNodeAnim* nodeAnim);
+    unsigned int findPosition(float animationTime, const aiNodeAnim* nodeAnim);
+    AABB computeAABB(const std::vector<Vertex>& vertices);
+    AABB transformAABB(const AABB& aabb, const glm::mat4& transform);
+
+    std::vector<Vertex> aggregatedVertices;
+    std::vector<Mesh> loadedMeshes;
+    AABB loadedModelAABB;
+    std::map<std::string, int> boneMapping;
+    std::vector<BoneInfo> boneInfo;
+    int numBones;
+    std::vector<glm::mat4> boneTransforms;
+    const aiScene* scene;
+    Assimp::Importer importer;
+};
+
+#endif // MODELLOADER_H
