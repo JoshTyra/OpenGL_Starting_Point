@@ -31,6 +31,19 @@ struct BoneInfo {
 
     BoneInfo() : BoneOffset(1.0f), FinalTransformation(1.0f) {}
 };
+struct Animation {
+    std::string name;
+    double duration;
+    double ticksPerSecond;
+    double startTime; // Start time in ticks
+    double endTime;   // End time in ticks
+    std::map<std::string, const aiNodeAnim*> channels;
+
+    Animation() : duration(0.0), ticksPerSecond(0.0), startTime(0.0), endTime(0.0) {}
+
+    Animation(const std::string& animName, double dur, double ticksPerSec, double start, double end)
+        : name(animName), duration(dur), ticksPerSecond(ticksPerSec), startTime(start), endTime(end) {}
+};
 
 struct AABB {
     glm::vec3 min;
@@ -50,16 +63,18 @@ public:
 
     void loadModel(const std::string& path);
     void updateBoneTransforms(float timeInSeconds);
+    void setCurrentAnimation(const std::string& name);
     const std::vector<Mesh>& getLoadedMeshes() const;
     const AABB& getLoadedModelAABB() const;
     const std::vector<glm::mat4>& getBoneTransforms() const;
+    void processAnimations();
 
 private:
     void processNode(aiNode* node, const aiScene* scene);
     void processMesh(aiMesh* mesh, const aiScene* scene, const aiMatrix4x4& nodeTransformation);
     void storeMesh(const std::vector<Vertex>& vertices, const std::vector<unsigned int>& indices, int meshBufferIndex);
     void readNodeHierarchy(float animationTime, const aiNode* node, const glm::mat4& parentTransform);
-    const aiNodeAnim* findNodeAnim(const aiAnimation* animation, const std::string nodeName);
+    const aiNodeAnim* findNodeAnim(const Animation& animation, const std::string& nodeName);
     void calcInterpolatedScaling(aiVector3D& out, float animationTime, const aiNodeAnim* nodeAnim);
     void calcInterpolatedRotation(aiQuaternion& out, float animationTime, const aiNodeAnim* nodeAnim);
     void calcInterpolatedPosition(aiVector3D& out, float animationTime, const aiNodeAnim* nodeAnim);
@@ -78,6 +93,8 @@ private:
     std::vector<glm::mat4> boneTransforms;
     const aiScene* scene;
     Assimp::Importer importer;
+    std::map<std::string, Animation> animations;
+    Animation* currentAnimation;
 };
 
 #endif // MODELLOADER_H

@@ -44,6 +44,10 @@ unsigned int characterMaskTexture;
 const glm::vec3 staticNodeRotationAxis(1.0f, 0.0f, 0.0f);
 const float staticNodeRotationAngle = glm::radians(-90.0f);
 
+int currentAnimationIndex = 0;
+float animationTime = 0.0f;
+std::vector<std::string> animationNames = { "combat_sword_idle", "combat_sword_move_front" };
+
 // Method declarations
 unsigned int loadCubemap(std::vector<std::string> faces);
 unsigned int compileShader(unsigned int type, const char* source);
@@ -300,6 +304,17 @@ void processInput(GLFWwindow* window) {
         camera.processKeyboardInput(GLFW_KEY_A, deltaTime);
     if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
         camera.processKeyboardInput(GLFW_KEY_D, deltaTime);
+
+    static bool keyPressed = false;
+    if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS && !keyPressed) {
+        keyPressed = true;
+        currentAnimationIndex = (currentAnimationIndex + 1) % animationNames.size();
+        modelLoader.setCurrentAnimation(animationNames[currentAnimationIndex]);
+        animationTime = 0.0f; // Reset animation time when switching
+    }
+    if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_RELEASE) {
+        keyPressed = false;
+    }
 }
 
 void mouseCallback(GLFWwindow* window, double xpos, double ypos) {
@@ -335,8 +350,7 @@ std::vector<std::string> colorCodes = {
     "#EB7EC5", // Multiplayer Pink
     "#D2D2D2", // Multiplayer White
     "#758550", // Campaign Color Lighter
-    "#55613A",  // Campaign Color Darker
-    "#000000", // Halo ce multiplayer black
+    "#55613A", // Campaign Color Darker
     "#707E71", // Halo ce multiplayer gray
     "#01FFFF", // Halo ce multiplayer cyan
     "#6493ED", // Halo ce multiplayer cobalt
@@ -388,12 +402,15 @@ int main() {
     initShaders();
 
     // Load the model and textures
-    std::string staticModelPath = FileSystemUtils::getAssetFilePath("models/combat_sword_idle.fbx");
+    std::string staticModelPath = FileSystemUtils::getAssetFilePath("models/masterchief.fbx");
 
     // Load the model
     modelLoader.loadModel(staticModelPath);
     loadedMeshes = modelLoader.getLoadedMeshes();
     loadedModelAABB = modelLoader.getLoadedModelAABB();
+
+    modelLoader.processAnimations(); // Process animations after loading the model
+    modelLoader.setCurrentAnimation(animationNames[currentAnimationIndex]);
 
     characterTexture = loadTexture(FileSystemUtils::getAssetFilePath("textures/masterchief_D.tga").c_str());
     characterNormalMap = loadTexture(FileSystemUtils::getAssetFilePath("textures/masterchief_bump.tga").c_str());
@@ -444,8 +461,9 @@ int main() {
         projectionMatrix = camera.getProjectionMatrix(static_cast<float>(WIDTH) / static_cast<float>(HEIGHT));
         viewMatrix = camera.getViewMatrix();
 
-        // Update animation time
-        modelLoader.updateBoneTransforms(currentFrame);
+        // Update the animation based on current time
+        animationTime += deltaTime;
+        modelLoader.updateBoneTransforms(animationTime);
 
         // Render the character
         glUseProgram(characterShaderProgram);

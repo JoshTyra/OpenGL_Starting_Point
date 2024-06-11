@@ -1,6 +1,6 @@
 #include "AnimatedModel.h"
 
-ModelLoader::ModelLoader() : numBones(0), scene(nullptr) {}
+ModelLoader::ModelLoader() : numBones(0), scene(nullptr), currentAnimation(nullptr) {}
 
 ModelLoader::~ModelLoader() {}
 
@@ -30,15 +30,17 @@ void ModelLoader::loadModel(const std::string& path) {
 }
 
 void ModelLoader::updateBoneTransforms(float timeInSeconds) {
-    if (!scene || !scene->mAnimations || scene->mNumAnimations == 0) {
-        std::cerr << "ERROR::ASSIMP:: No animations found in the model." << std::endl;
+    if (!scene || !currentAnimation) {
+        // Set the bone transforms to identity if no animations are found or current animation is not set
+        boneTransforms.resize(boneInfo.size(), glm::mat4(1.0f));
         return;
     }
 
-    const aiAnimation* animation = scene->mAnimations[0];
-    float ticksPerSecond = animation->mTicksPerSecond != 0 ? animation->mTicksPerSecond : 25.0f;
-    float timeInTicks = timeInSeconds * ticksPerSecond;
-    float animationTime = fmod(timeInTicks, animation->mDuration);
+    const Animation& animation = *currentAnimation;
+    float timeInTicks = timeInSeconds * animation.ticksPerSecond;
+
+    // Loop the animation within the specified range
+    float animationTime = fmod(timeInTicks, animation.endTime - animation.startTime) + animation.startTime;
 
     glm::mat4 identity = glm::mat4(1.0f);
     readNodeHierarchy(animationTime, scene->mRootNode, identity);
@@ -189,10 +191,9 @@ void ModelLoader::storeMesh(const std::vector<Vertex>& vertices, const std::vect
 void ModelLoader::readNodeHierarchy(float animationTime, const aiNode* node, const glm::mat4& parentTransform) {
     std::string nodeName(node->mName.data);
 
-    const aiAnimation* animation = scene->mAnimations[0];
     glm::mat4 nodeTransformation = glm::transpose(glm::make_mat4(&node->mTransformation.a1));
 
-    const aiNodeAnim* nodeAnim = findNodeAnim(animation, nodeName);
+    const aiNodeAnim* nodeAnim = findNodeAnim(*currentAnimation, nodeName);
 
     if (nodeAnim) {
         aiVector3D scaling;
@@ -222,14 +223,9 @@ void ModelLoader::readNodeHierarchy(float animationTime, const aiNode* node, con
     }
 }
 
-const aiNodeAnim* ModelLoader::findNodeAnim(const aiAnimation* animation, const std::string nodeName) {
-    for (unsigned int i = 0; i < animation->mNumChannels; i++) {
-        const aiNodeAnim* nodeAnim = animation->mChannels[i];
-        if (std::string(nodeAnim->mNodeName.data) == nodeName) {
-            return nodeAnim;
-        }
-    }
-    return nullptr;
+const aiNodeAnim* ModelLoader::findNodeAnim(const Animation& animation, const std::string& nodeName) {
+    auto it = animation.channels.find(nodeName);
+    return it != animation.channels.end() ? it->second : nullptr;
 }
 
 void ModelLoader::calcInterpolatedScaling(aiVector3D& out, float animationTime, const aiNodeAnim* nodeAnim) {
@@ -351,4 +347,44 @@ AABB ModelLoader::transformAABB(const AABB& aabb, const glm::mat4& transform) {
 
 const std::vector<glm::mat4>& ModelLoader::getBoneTransforms() const {
     return boneTransforms;
+}
+
+void ModelLoader::processAnimations() {
+    if (!scene || scene->mNumAnimations == 0) {
+        std::cout << "No animations found to process." << std::endl;
+        return;
+    }
+
+    for (unsigned int i = 0; i < scene->mNumAnimations; ++i) {
+        const aiAnimation* aiAnim = scene->mAnimations[i];
+
+        // Example: Assuming two test animations, first from 0-58 and second from 59-116
+        // You can adjust these ranges based on your actual keyframes
+        Animation anim1(aiAnim->mName.C_Str(), aiAnim->mDuration,
+            aiAnim->mTicksPerSecond != 0 ? aiAnim->mTicksPerSecond : 25.0,
+            0, 58);
+        Animation anim2(aiAnim->mName.C_Str(), aiAnim->mDuration,
+            aiAnim->mTicksPerSecond != 0 ? aiAnim->mTicksPerSecond : 25.0,
+            59, 78);
+
+        for (unsigned int j = 0; j < aiAnim->mNumChannels; ++j) {
+            const aiNodeAnim* nodeAnim = aiAnim->mChannels[j];
+            anim1.channels[nodeAnim->mNodeName.data] = nodeAnim;
+            anim2.channels[nodeAnim->mNodeName.data] = nodeAnim;
+        }
+
+        animations["combat_sword_idle"] = anim1;
+        animations["combat_sword_move_front"] = anim2;
+    }
+}
+
+void ModelLoader::setCurrentAnimation(const std::string& name) {
+    auto it = animations.find(name);
+    if (it != animations.end()) {
+        currentAnimation = &it->second;
+    }
+    else {
+        std::cerr << "Animation " << name << " not found." << std::endl;
+        currentAnimation = nullptr; // Set to nullptr if the animation is not found
+    }
 }
