@@ -27,7 +27,7 @@ bool firstMouse = true;
 float deltaTime = 0.0f; // Time between current frame and last frame
 float lastFrame = 0.0f; // Time of last frame
 
-Camera camera(glm::vec3(0.0f, 0.0f, 10.0f), glm::vec3(0.0f, 1.0f, 0.0f), -90.0f, 0.0f, 6.0f, 0.1f, 45.0f);
+Camera camera(glm::vec3(0.0f, 0.0f, 10.0f), glm::vec3(0.0f, 1.0f, 0.0f), -90.0f, 0.0f, 20.0f, 0.1f, 45.0f);
 ModelLoader modelLoader;
 std::vector<Mesh> loadedMeshes;
 AABB loadedModelAABB;
@@ -40,9 +40,6 @@ unsigned int characterNormalMap;
 unsigned int cubemapTexture;
 unsigned int visorCubemapTexture;
 unsigned int characterMaskTexture;
-
-const glm::vec3 staticNodeRotationAxis(1.0f, 0.0f, 0.0f);
-const float staticNodeRotationAngle = glm::radians(-90.0f);
 
 int currentAnimationIndex = 0;
 float animationTime = 0.0f;
@@ -295,6 +292,43 @@ void initShaders() {
     glDeleteShader(characterFragmentShader);
 }
 
+glm::vec3 hexToRGB(const std::string& hex) {
+    int r = std::stoi(hex.substr(1, 2), nullptr, 16);
+    int g = std::stoi(hex.substr(3, 2), nullptr, 16);
+    int b = std::stoi(hex.substr(5, 2), nullptr, 16);
+    return glm::vec3(r / 255.0f, g / 255.0f, b / 255.0f);
+}
+
+std::vector<std::string> colorCodes = {
+    //"#C13E3E", // Multiplayer Red
+    //"#3639C9", // Multiplayer Blue
+    //"#C9BA36", // Multiplayer Gold/Yellow
+    //"#208A20", // Multiplayer Green
+    //"#B53C8A", // Multiplayer Purple
+    //"#DF9735", // Multiplayer Orange
+    //"#744821", // Multiplayer Brown
+    //"#EB7EC5", // Multiplayer Pink
+    //"#D2D2D2", // Multiplayer White
+    //"#758550", // Campaign Color Lighter
+    //"#55613A", // Campaign Color Darker
+    //"#707E71", // Halo ce multiplayer gray
+    //"#01FFFF", // Halo ce multiplayer cyan
+    "#6493ED" // Halo ce multiplayer cobalt
+    //"#C69C6C", // Halo ce multiplayer tan
+};
+
+glm::vec3 getRandomColor() {
+    static std::random_device rd;
+    static std::mt19937 engine(rd());
+    static std::uniform_int_distribution<int> distribution(0, colorCodes.size() - 1);
+    return hexToRGB(colorCodes[distribution(engine)]);
+}
+
+// Update the character's position based on forward direction and speed
+void updateCharacterPosition(glm::vec3& position, glm::vec3& forwardDirection, float speed, float deltaTime) {
+    position += forwardDirection * speed * deltaTime;
+}
+
 void processInput(GLFWwindow* window) {
     if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
         camera.processKeyboardInput(GLFW_KEY_W, deltaTime);
@@ -330,38 +364,6 @@ void mouseCallback(GLFWwindow* window, double xpos, double ypos) {
     lastY = ypos;
 
     camera.processMouseMovement(xoffset, yoffset);
-}
-
-glm::vec3 hexToRGB(const std::string& hex) {
-    int r = std::stoi(hex.substr(1, 2), nullptr, 16);
-    int g = std::stoi(hex.substr(3, 2), nullptr, 16);
-    int b = std::stoi(hex.substr(5, 2), nullptr, 16);
-    return glm::vec3(r / 255.0f, g / 255.0f, b / 255.0f);
-}
-
-std::vector<std::string> colorCodes = {
-    "#C13E3E", // Multiplayer Red
-    "#3639C9", // Multiplayer Blue
-    "#C9BA36", // Multiplayer Gold/Yellow
-    "#208A20", // Multiplayer Green
-    "#B53C8A", // Multiplayer Purple
-    "#DF9735", // Multiplayer Orange
-    "#744821", // Multiplayer Brown
-    "#EB7EC5", // Multiplayer Pink
-    "#D2D2D2", // Multiplayer White
-    "#758550", // Campaign Color Lighter
-    "#55613A", // Campaign Color Darker
-    "#707E71", // Halo ce multiplayer gray
-    "#01FFFF", // Halo ce multiplayer cyan
-    "#6493ED", // Halo ce multiplayer cobalt
-    "#C69C6C", // Halo ce multiplayer tan
-};
-
-glm::vec3 getRandomColor() {
-    static std::random_device rd;
-    static std::mt19937 engine(rd());
-    static std::uniform_int_distribution<int> distribution(0, colorCodes.size() - 1);
-    return hexToRGB(colorCodes[distribution(engine)]);
 }
 
 int main() {
@@ -428,12 +430,12 @@ int main() {
     cubemapTexture = loadCubemap(faces);
 
     std::vector<std::string> visorfaces{
-    FileSystemUtils::getAssetFilePath("textures/cubemaps/mirror_surface_right.tga"),
-    FileSystemUtils::getAssetFilePath("textures/cubemaps/mirror_surface_left.tga"),
-    FileSystemUtils::getAssetFilePath("textures/cubemaps/mirror_surface_up.tga"),
-    FileSystemUtils::getAssetFilePath("textures/cubemaps/mirror_surface_down.tga"),
-    FileSystemUtils::getAssetFilePath("textures/cubemaps/mirror_surface_front.tga"),
-    FileSystemUtils::getAssetFilePath("textures/cubemaps/mirror_surface_back.tga")
+        FileSystemUtils::getAssetFilePath("textures/cubemaps/mirror_surface_right.tga"),
+        FileSystemUtils::getAssetFilePath("textures/cubemaps/mirror_surface_left.tga"),
+        FileSystemUtils::getAssetFilePath("textures/cubemaps/mirror_surface_up.tga"),
+        FileSystemUtils::getAssetFilePath("textures/cubemaps/mirror_surface_down.tga"),
+        FileSystemUtils::getAssetFilePath("textures/cubemaps/mirror_surface_front.tga"),
+        FileSystemUtils::getAssetFilePath("textures/cubemaps/mirror_surface_back.tga")
     };
 
     visorCubemapTexture = loadCubemap(visorfaces);
@@ -441,7 +443,18 @@ int main() {
     // Set the random color once
     glm::vec3 randomColor = getRandomColor();
 
-    // Render loop
+    glm::vec3 characterPosition(0.0f, 0.0f, 0.0f);
+    float movementSpeed = 4.5f; // Adjust the speed as needed
+    bool isMoving = false;
+    float currentRotationAngle = 0.0f; // Current rotation angle
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_real_distribution<float> dis(-glm::radians(30.0f), glm::radians(30.0f)); // Random angle change
+
+    float timeSinceLastChange = 0.0f;
+    const float changeInterval = 2.0f; // Change direction every 2 seconds
+
+    // Main render loop
     while (!glfwWindowShouldClose(window)) {
         float currentFrame = static_cast<float>(glfwGetTime());
         deltaTime = currentFrame - lastFrame;
@@ -449,29 +462,49 @@ int main() {
 
         processInput(window);
 
-        // Input
         if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
             glfwSetWindowShouldClose(window, true);
 
-        // Clear the color buffer
-        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClearColor(0.2f, 0.2f, 0.3f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        // Update camera matrices
         projectionMatrix = camera.getProjectionMatrix(static_cast<float>(WIDTH) / static_cast<float>(HEIGHT));
         viewMatrix = camera.getViewMatrix();
 
-        // Update the animation based on current time
         animationTime += deltaTime;
         modelLoader.updateBoneTransforms(animationTime);
 
-        // Render the character
+        // Check if the character is playing the "combat_sword_move_front" animation
+        if (animationNames[currentAnimationIndex] == "combat_sword_move_front") {
+            isMoving = true;
+
+            // Update rotation angle randomly at intervals
+            timeSinceLastChange += deltaTime;
+            if (timeSinceLastChange >= changeInterval) {
+                currentRotationAngle += dis(gen); // Apply a random change in rotation angle
+                timeSinceLastChange = 0.0f; // Reset timer
+            }
+
+            // Calculate the new forward direction based on the current rotation
+            glm::mat4 rotationMatrix = glm::rotate(glm::mat4(1.0f), currentRotationAngle, glm::vec3(0.0f, 1.0f, 0.0f));
+            glm::vec3 forwardDirection = glm::normalize(glm::vec3(rotationMatrix * glm::vec4(1.0f, 0.0f, 0.0f, 0.0f)));
+
+            // Update character position
+            updateCharacterPosition(characterPosition, forwardDirection, movementSpeed, deltaTime);
+        }
+        else {
+            isMoving = false;
+        }
+
         glUseProgram(characterShaderProgram);
 
-        // Set up uniform variables
+        // Set up model matrix
         glm::mat4 modelMatrix = glm::mat4(1.0f);
-        modelMatrix = glm::scale(modelMatrix, glm::vec3(0.025f)); // Apply scaling transformation
-        modelMatrix = glm::rotate(modelMatrix, staticNodeRotationAngle, staticNodeRotationAxis); // Apply rotation
+        modelMatrix = glm::translate(modelMatrix, characterPosition);
+        modelMatrix = glm::rotate(modelMatrix, currentRotationAngle, glm::vec3(0.0f, 1.0f, 0.0f)); // Rotate based on current angle
+        modelMatrix = glm::rotate(modelMatrix, glm::radians(90.0f), glm::vec3(-1.0f, 0.0f, 0.0f)); // Rotate to stand upright
+        modelMatrix = glm::scale(modelMatrix, glm::vec3(0.025f)); // Scale the character
+
         glUniformMatrix4fv(glGetUniformLocation(characterShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(modelMatrix));
         glUniformMatrix4fv(glGetUniformLocation(characterShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(viewMatrix));
         glUniformMatrix4fv(glGetUniformLocation(characterShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projectionMatrix));
@@ -500,7 +533,7 @@ int main() {
             glUniformMatrix4fv(glGetUniformLocation(characterShaderProgram, uniformName.c_str()), 1, GL_FALSE, glm::value_ptr(modelLoader.getBoneTransforms()[i]));
         }
 
-        // Set up textures
+        // Set up textures and draw the character
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, characterTexture);
         glUniform1i(glGetUniformLocation(characterShaderProgram, "texture_diffuse"), 0);
@@ -517,7 +550,6 @@ int main() {
         glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture);
         glUniform1i(glGetUniformLocation(characterShaderProgram, "cubemap"), 3);
 
-        // Render the meshes
         for (const auto& mesh : loadedMeshes) {
             if (mesh.meshBufferIndex == 0) {
                 glActiveTexture(GL_TEXTURE3);
@@ -534,7 +566,6 @@ int main() {
             glDrawElements(GL_TRIANGLES, mesh.indices.size(), GL_UNSIGNED_INT, 0);
         }
 
-        // Swap buffers and poll IO events
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
@@ -550,3 +581,4 @@ int main() {
     glfwTerminate();
     return 0;
 }
+
