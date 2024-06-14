@@ -4,6 +4,16 @@ ModelLoader::ModelLoader() : numBones(0), scene(nullptr), currentAnimation(nullp
 
 ModelLoader::~ModelLoader() {}
 
+void normalizeWeights(Vertex& vertex) {
+    float totalWeight = vertex.Weights[0] + vertex.Weights[1] + vertex.Weights[2] + vertex.Weights[3];
+    if (totalWeight > 0.0f) {
+        vertex.Weights[0] /= totalWeight;
+        vertex.Weights[1] /= totalWeight;
+        vertex.Weights[2] /= totalWeight;
+        vertex.Weights[3] /= totalWeight;
+    }
+}
+
 void ModelLoader::loadModel(const std::string& path) {
     scene = importer.ReadFile(path, aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_CalcTangentSpace | aiProcess_JoinIdenticalVertices);
 
@@ -125,6 +135,11 @@ void ModelLoader::processMesh(aiMesh* mesh, const aiScene* scene, const aiMatrix
                 }
             }
         }
+    }
+
+    // Normalize the weights for all vertices
+    for (auto& vertex : vertices) {
+        normalizeWeights(vertex);
     }
 
     // Aggregate vertices for AABB computation
