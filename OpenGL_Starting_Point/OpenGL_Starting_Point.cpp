@@ -27,7 +27,7 @@ bool firstMouse = true;
 float deltaTime = 0.0f; // Time between current frame and last frame
 float lastFrame = 0.0f; // Time of last frame
 
-Camera camera(glm::vec3(0.0f, 0.0f, 10.0f), glm::vec3(0.0f, 1.0f, 0.0f), -90.0f, 0.0f, 20.0f, 0.1f, 45.0f);
+Camera camera(glm::vec3(5.0f, 3.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), -90.0f, 0.0f, 6.0f, 0.1f, 45.0f);
 ModelLoader modelLoader;
 std::vector<Mesh> loadedMeshes;
 AABB loadedModelAABB;
@@ -300,21 +300,21 @@ glm::vec3 hexToRGB(const std::string& hex) {
 }
 
 std::vector<std::string> colorCodes = {
-    //"#C13E3E", // Multiplayer Red
-    //"#3639C9", // Multiplayer Blue
-    //"#C9BA36", // Multiplayer Gold/Yellow
-    //"#208A20", // Multiplayer Green
-    //"#B53C8A", // Multiplayer Purple
-    //"#DF9735", // Multiplayer Orange
-    //"#744821", // Multiplayer Brown
-    //"#EB7EC5", // Multiplayer Pink
-    //"#D2D2D2", // Multiplayer White
-    //"#758550", // Campaign Color Lighter
-    //"#55613A", // Campaign Color Darker
-    //"#707E71", // Halo ce multiplayer gray
-    //"#01FFFF", // Halo ce multiplayer cyan
-    "#6493ED" // Halo ce multiplayer cobalt
-    //"#C69C6C", // Halo ce multiplayer tan
+    "#C13E3E", // Multiplayer Red
+    "#3639C9", // Multiplayer Blue
+    "#C9BA36", // Multiplayer Gold/Yellow
+    "#208A20", // Multiplayer Green
+    "#B53C8A", // Multiplayer Purple
+    "#DF9735", // Multiplayer Orange
+    "#744821", // Multiplayer Brown
+    "#EB7EC5", // Multiplayer Pink
+    "#D2D2D2", // Multiplayer White
+    "#758550", // Campaign Color Lighter
+    "#55613A", // Campaign Color Darker
+    "#707E71", // Halo ce multiplayer gray
+    "#01FFFF", // Halo ce multiplayer cyan
+    "#6493ED", // Halo ce multiplayer cobalt
+    "#C69C6C", // Halo ce multiplayer tan
 };
 
 glm::vec3 getRandomColor() {
@@ -471,8 +471,9 @@ int main() {
         projectionMatrix = camera.getProjectionMatrix(static_cast<float>(WIDTH) / static_cast<float>(HEIGHT));
         viewMatrix = camera.getViewMatrix();
 
-        animationTime += deltaTime;
-        modelLoader.updateBoneTransforms(animationTime);
+        animationTime = glfwGetTime(); // Use the actual elapsed time for animation
+        modelLoader.updateBoneTransforms(animationTime, animationNames, currentAnimationIndex);
+        modelLoader.updateHeadRotation(deltaTime, animationNames, currentAnimationIndex); // Update head rotation with deltaTime
 
         // Check if the character is playing the "combat_sword_move_front" animation
         if (animationNames[currentAnimationIndex] == "combat_sword_move_front") {

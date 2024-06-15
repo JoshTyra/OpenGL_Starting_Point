@@ -62,18 +62,19 @@ public:
     ~ModelLoader();
 
     void loadModel(const std::string& path);
-    void updateBoneTransforms(float timeInSeconds);
+    void updateBoneTransforms(float timeInSeconds, std::vector<std::string> animationNames, int currentAnimationIndex);
     void setCurrentAnimation(const std::string& name);
     const std::vector<Mesh>& getLoadedMeshes() const;
     const AABB& getLoadedModelAABB() const;
     const std::vector<glm::mat4>& getBoneTransforms() const;
     void processAnimations();
+    void updateHeadRotation(float deltaTime, std::vector<std::string> animationNames, int currentAnimationIndex);
 
 private:
     void processNode(aiNode* node, const aiScene* scene);
     void processMesh(aiMesh* mesh, const aiScene* scene, const aiMatrix4x4& nodeTransformation);
     void storeMesh(const std::vector<Vertex>& vertices, const std::vector<unsigned int>& indices, int meshBufferIndex);
-    void readNodeHierarchy(float animationTime, const aiNode* node, const glm::mat4& parentTransform);
+    void readNodeHierarchy(float animationTime, const aiNode* node, const glm::mat4& parentTransform, std::vector<std::string> animationNames, int currentAnimationIndex);
     const aiNodeAnim* findNodeAnim(const Animation& animation, const std::string& nodeName);
     void calcInterpolatedScaling(aiVector3D& out, float animationTime, const aiNodeAnim* nodeAnim);
     void calcInterpolatedRotation(aiQuaternion& out, float animationTime, const aiNodeAnim* nodeAnim);
@@ -95,6 +96,14 @@ private:
     Assimp::Importer importer;
     std::map<std::string, Animation> animations;
     Animation* currentAnimation;
+
+    glm::quat currentHeadRotation;
+    glm::quat targetHeadRotation;
+    float headRotationTimer;
+    float headRotationElapsedTime;
+    float headRotationDuration;
+    bool headRotationInProgress;
+    std::vector<glm::vec2> headPoses;
 };
 
 #endif // MODELLOADER_H

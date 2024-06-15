@@ -1,6 +1,20 @@
 #include "AnimatedModel.h"
 
-ModelLoader::ModelLoader() : numBones(0), scene(nullptr), currentAnimation(nullptr) {}
+ModelLoader::ModelLoader()
+    : numBones(0), scene(nullptr), currentAnimation(nullptr),
+    currentHeadRotation(glm::quat(1.0f, 0.0f, 0.0f, 0.0f)),
+    targetHeadRotation(glm::quat(1.0f, 0.0f, 0.0f, 0.0f)),
+    headRotationTimer(0.0f),
+    headRotationElapsedTime(0.0f),
+    headRotationDuration(3.0f),  // Change head rotation duration as needed
+    headRotationInProgress(false),
+    headPoses({
+        glm::vec2(0.0f, 0.0f),  // Neutral pose
+        glm::vec2(glm::radians(45.0f), glm::radians(5.0f)),  // Slight right tilt
+        glm::vec2(glm::radians(-45.0f), glm::radians(-5.0f)),  // Slight left tilt
+        glm::vec2(glm::radians(30.0f), glm::radians(10.0f)),  // Slight upward tilt
+        glm::vec2(glm::radians(-30.0f), glm::radians(-10.0f))  // Slight downward tilt
+        }) {}
 
 ModelLoader::~ModelLoader() {}
 
@@ -39,7 +53,7 @@ void ModelLoader::loadModel(const std::string& path) {
     loadedModelAABB = computeAABB(aggregatedVertices);
 }
 
-void ModelLoader::updateBoneTransforms(float timeInSeconds) {
+void ModelLoader::updateBoneTransforms(float timeInSeconds, std::vector<std::string> animationNames, int currentAnimationIndex) {
     if (!scene || !currentAnimation) {
         // Set the bone transforms to identity if no animations are found or current animation is not set
         boneTransforms.resize(boneInfo.size(), glm::mat4(1.0f));
@@ -53,7 +67,7 @@ void ModelLoader::updateBoneTransforms(float timeInSeconds) {
     float animationTime = fmod(timeInTicks, animation.endTime - animation.startTime) + animation.startTime;
 
     glm::mat4 identity = glm::mat4(1.0f);
-    readNodeHierarchy(animationTime, scene->mRootNode, identity);
+    readNodeHierarchy(animationTime, scene->mRootNode, identity, animationNames, currentAnimationIndex);
 
     boneTransforms.resize(boneInfo.size());
     for (unsigned int i = 0; i < boneInfo.size(); i++) {
@@ -203,7 +217,7 @@ void ModelLoader::storeMesh(const std::vector<Vertex>& vertices, const std::vect
     loadedMeshes.push_back(mesh);
 }
 
-void ModelLoader::readNodeHierarchy(float animationTime, const aiNode* node, const glm::mat4& parentTransform) {
+void ModelLoader::readNodeHierarchy(float animationTime, const aiNode* node, const glm::mat4& parentTransform, std::vector<std::string> animationNames, int currentAnimationIndex) {
     std::string nodeName(node->mName.data);
 
     glm::mat4 nodeTransformation = glm::transpose(glm::make_mat4(&node->mTransformation.a1));
@@ -230,11 +244,16 @@ void ModelLoader::readNodeHierarchy(float animationTime, const aiNode* node, con
 
     if (boneMapping.find(nodeName) != boneMapping.end()) {
         int boneIndex = boneMapping[nodeName];
+        if (nodeName == "head") {
+            // Apply interpolated head rotation
+            glm::mat4 headRotationM = glm::mat4_cast(currentHeadRotation);
+            globalTransformation = globalTransformation * headRotationM;
+        }
         boneInfo[boneIndex].FinalTransformation = globalTransformation * boneInfo[boneIndex].BoneOffset;
     }
 
     for (unsigned int i = 0; i < node->mNumChildren; i++) {
-        readNodeHierarchy(animationTime, node->mChildren[i], globalTransformation);
+        readNodeHierarchy(animationTime, node->mChildren[i], globalTransformation, animationNames, currentAnimationIndex);
     }
 }
 
@@ -403,3 +422,42 @@ void ModelLoader::setCurrentAnimation(const std::string& name) {
         currentAnimation = nullptr; // Set to nullptr if the animation is not found
     }
 }
+
+void ModelLoader::updateHeadRotation(float deltaTime, std::vector<std::string> animationNames, int currentAnimationIndex) {
+    // Check if current animation is "combat_sword_idle"
+    if (animationNames[currentAnimationIndex] == "combat_sword_idle") {
+        headRotationTimer += deltaTime;
+
+        // Change head pose every 3 seconds
+        if (headRotationTimer >= 3.0f && !headRotationInProgress) {
+            glm::vec2 targetPose = headPoses[rand() % headPoses.size()];
+
+            glm::quat targetHeadRotationY = glm::angleAxis(targetPose.x, glm::vec3(-1.0f, 0.0f, 0.0f));
+            glm::quat targetHeadRotationX = glm::angleAxis(targetPose.y, glm::vec3(1.0f, 0.0f, 0.0f));
+            targetHeadRotation = targetHeadRotationY * targetHeadRotationX;
+
+            headRotationElapsedTime = 0.0f;
+            headRotationInProgress = true;
+            headRotationTimer = 0.0f;  // Reset the timer
+        }
+
+        // Update head rotation if in progress
+        if (headRotationInProgress) {
+            headRotationElapsedTime += deltaTime;
+            float t = headRotationElapsedTime / headRotationDuration;
+            if (t >= 1.0f) {
+                t = 1.0f;
+                headRotationInProgress = false;
+                currentHeadRotation = targetHeadRotation;
+            }
+            else {
+                currentHeadRotation = glm::slerp(currentHeadRotation, targetHeadRotation, t);
+            }
+        }
+    }
+    else {
+        // Only set the flag to false, don't reset the rotation
+        headRotationInProgress = false;
+    }
+}
+
