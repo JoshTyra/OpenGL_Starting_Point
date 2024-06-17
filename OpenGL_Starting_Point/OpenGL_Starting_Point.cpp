@@ -17,6 +17,7 @@
 #include <map>
 #include <iostream>
 #include "AnimatedModel.h"
+#include "AnimationStateMachine.h"
 
 // Constants and global variables
 const int WIDTH = 2560;
@@ -44,6 +45,10 @@ unsigned int characterMaskTexture;
 int currentAnimationIndex = 0;
 float animationTime = 0.0f;
 std::vector<std::string> animationNames = { "combat_sword_idle", "combat_sword_move_front" };
+
+// Ai shit here
+AnimationStateMachine animationStateMachine;
+
 
 // Method declarations
 unsigned int loadCubemap(std::vector<std::string> faces);
@@ -342,9 +347,12 @@ void processInput(GLFWwindow* window) {
     static bool keyPressed = false;
     if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS && !keyPressed) {
         keyPressed = true;
-        currentAnimationIndex = (currentAnimationIndex + 1) % animationNames.size();
-        modelLoader.setCurrentAnimation(animationNames[currentAnimationIndex]);
-        animationTime = 0.0f; // Reset animation time when switching
+        if (animationStateMachine.state_cast<const Idle*>() != nullptr) {
+            animationStateMachine.process_event(StartRunning());
+        }
+        else if (animationStateMachine.state_cast<const Running*>() != nullptr) {
+            animationStateMachine.process_event(StopRunning());
+        }
     }
     if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_RELEASE) {
         keyPressed = false;
@@ -454,7 +462,13 @@ int main() {
     float timeSinceLastChange = 0.0f;
     const float changeInterval = 2.0f; // Change direction every 2 seconds
 
+    // Initialize the state machine
+    animationStateMachine.initiate();
+
     // Main render loop
+    float autonomousTimer = 0.0f;
+    const float autonomousInterval = 5.0f; // Interval to change state
+
     while (!glfwWindowShouldClose(window)) {
         float currentFrame = static_cast<float>(glfwGetTime());
         deltaTime = currentFrame - lastFrame;
@@ -471,12 +485,28 @@ int main() {
         projectionMatrix = camera.getProjectionMatrix(static_cast<float>(WIDTH) / static_cast<float>(HEIGHT));
         viewMatrix = camera.getViewMatrix();
 
-        animationTime = glfwGetTime(); // Use the actual elapsed time for animation
-        modelLoader.updateBoneTransforms(animationTime, animationNames, currentAnimationIndex);
-        modelLoader.updateHeadRotation(deltaTime, animationNames, currentAnimationIndex); // Update head rotation with deltaTime
+        // Autonomous behavior logic
+        autonomousTimer += deltaTime;
+        if (autonomousTimer >= autonomousInterval) {
+            if (animationStateMachine.state_cast<const Idle*>() != nullptr) {
+                animationStateMachine.process_event(StartWandering());
+            }
+            else if (animationStateMachine.state_cast<const Wandering*>() != nullptr) {
+                animationStateMachine.process_event(StopWandering());
+            }
+            autonomousTimer = 0.0f; // Reset timer
+        }
 
-        // Check if the character is playing the "combat_sword_move_front" animation
-        if (animationNames[currentAnimationIndex] == "combat_sword_move_front") {
+        // Update animation state based on the state machine
+        if (animationStateMachine.state_cast<const Idle*>() != nullptr) {
+            currentAnimationIndex = 0; // Idle animation
+        }
+        else if (animationStateMachine.state_cast<const Running*>() != nullptr) {
+            currentAnimationIndex = 1; // Running animation
+        }
+        else if (animationStateMachine.state_cast<const Wandering*>() != nullptr) {
+            // Wandering state behavior
+            currentAnimationIndex = 1; // Use running animation for wandering
             isMoving = true;
 
             // Update rotation angle randomly at intervals
@@ -493,9 +523,12 @@ int main() {
             // Update character position
             updateCharacterPosition(characterPosition, forwardDirection, movementSpeed, deltaTime);
         }
-        else {
-            isMoving = false;
-        }
+
+        modelLoader.setCurrentAnimation(animationNames[currentAnimationIndex]);
+
+        animationTime = glfwGetTime(); // Use the actual elapsed time for animation
+        modelLoader.updateBoneTransforms(animationTime, animationNames, currentAnimationIndex);
+        modelLoader.updateHeadRotation(deltaTime, animationNames, currentAnimationIndex); // Update head rotation with deltaTime
 
         glUseProgram(characterShaderProgram);
 
@@ -582,4 +615,5 @@ int main() {
     glfwTerminate();
     return 0;
 }
+
 
