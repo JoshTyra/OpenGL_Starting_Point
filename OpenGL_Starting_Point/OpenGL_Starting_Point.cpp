@@ -28,7 +28,7 @@ bool firstMouse = true;
 float deltaTime = 0.0f; // Time between current frame and last frame
 float lastFrame = 0.0f; // Time of last frame
 
-Camera camera(glm::vec3(5.0f, 3.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), -90.0f, 0.0f, 6.0f, 0.1f, 45.0f);
+Camera camera(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), -180.0f, 0.0f, 6.0f, 0.1f, 45.0f);
 ModelLoader modelLoader;
 std::vector<Mesh> loadedMeshes;
 AABB loadedModelAABB;
@@ -58,6 +58,9 @@ unsigned int loadTexture(const char* path);
 void initShaders();
 void processInput(GLFWwindow* window);
 void mouseCallback(GLFWwindow* window, double xpos, double ypos);
+void framebufferSizeCallback(GLFWwindow* window, int width, int height);
+void windowIconifyCallback(GLFWwindow* window, int iconified);
+
 
 unsigned int loadCubemap(std::vector<std::string> faces) {
     unsigned int textureID;
@@ -334,6 +337,12 @@ void updateCharacterPosition(glm::vec3& position, glm::vec3& forwardDirection, f
     position += forwardDirection * speed * deltaTime;
 }
 
+void updateCameraPosition(Camera& camera, const glm::vec3& characterPosition) {
+    glm::vec3 cameraOffset = glm::vec3(3.0f, 1.5f, 2.0f); // Adjust as necessary for the desired follow distance
+    camera.position = characterPosition + cameraOffset;
+    camera.updateCameraVectors(); // Ensure the camera's vectors are updated based on the new position
+}
+
 void processInput(GLFWwindow* window) {
     if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
         camera.processKeyboardInput(GLFW_KEY_W, deltaTime);
@@ -395,6 +404,10 @@ int main() {
     glfwSwapInterval(1); // Enable VSync to cap frame rate to monitor's refresh rate
     glfwSetCursorPosCallback(window, mouseCallback);
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+
+    // Set the window size and iconify callbacks
+    glfwSetFramebufferSizeCallback(window, framebufferSizeCallback);
+    glfwSetWindowIconifyCallback(window, windowIconifyCallback);
 
     // Initialize GLEW
     glewExperimental = GL_TRUE;
@@ -459,16 +472,18 @@ int main() {
     std::mt19937 gen(rd());
     std::uniform_real_distribution<float> dis(-glm::radians(30.0f), glm::radians(30.0f)); // Random angle change
 
+    camera.cameraLookAt(glm::vec3(-0.5f, 0.0f, 1.0f));
+
     float timeSinceLastChange = 0.0f;
     const float changeInterval = 2.0f; // Change direction every 2 seconds
 
     // Initialize the state machine
     animationStateMachine.initiate();
 
-    // Main render loop
     float autonomousTimer = 0.0f;
     const float autonomousInterval = 5.0f; // Interval to change state
 
+    // Main render loop
     while (!glfwWindowShouldClose(window)) {
         float currentFrame = static_cast<float>(glfwGetTime());
         deltaTime = currentFrame - lastFrame;
@@ -523,6 +538,9 @@ int main() {
             // Update character position
             updateCharacterPosition(characterPosition, forwardDirection, movementSpeed, deltaTime);
         }
+
+        // Update camera position to follow the character
+        updateCameraPosition(camera, characterPosition);
 
         modelLoader.setCurrentAnimation(animationNames[currentAnimationIndex]);
 
@@ -614,6 +632,23 @@ int main() {
 
     glfwTerminate();
     return 0;
+}
+
+void framebufferSizeCallback(GLFWwindow* window, int width, int height) {
+    glViewport(0, 0, width, height);
+    // You can also update the projection matrix here if needed
+    projectionMatrix = camera.getProjectionMatrix(static_cast<float>(width) / static_cast<float>(height));
+}
+
+void windowIconifyCallback(GLFWwindow* window, int iconified) {
+    if (iconified) {
+        // Window was minimized
+        std::cout << "Window minimized" << std::endl;
+    }
+    else {
+        // Window was restored
+        std::cout << "Window restored" << std::endl;
+    }
 }
 
 
