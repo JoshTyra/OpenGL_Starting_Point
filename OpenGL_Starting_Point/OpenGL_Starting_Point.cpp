@@ -44,7 +44,16 @@ unsigned int characterMaskTexture;
 
 int currentAnimationIndex = 0;
 float animationTime = 0.0f;
-std::vector<std::string> animationNames = { "combat_sword_idle", "combat_sword_move_front" };
+std::vector<std::string> animationNames = { "combat_sword_idle", "combat_sword_move_front", "ui_pr_idle"};
+
+std::random_device rd;
+std::mt19937 gen(rd());
+std::uniform_int_distribution<> distIdle(0, 2); // Update to include the indices 0 and 2
+
+// Add these variables at the top of your file
+float idleAnimationChangeTimer = 0.0f;
+const float idleAnimationChangeInterval = 2.0f; // Minimum interval between idle animation changes in seconds
+bool idleAnimationSelected = false; // Add this flag at the top of your file
 
 // Ai shit here
 AnimationStateMachine animationStateMachine;
@@ -244,7 +253,7 @@ const char* characterFragmentShaderSource = R"(
             vec4 diffuseTexture = texture(texture_diffuse, TexCoord);
             vec3 diffuseTexColor = diffuseTexture.rgb;
             float alphaValue = diffuseTexture.a;
-            float blendFactor = 0.25f;
+            float blendFactor = 0.3f;
 
             vec3 maskValue = texture(texture_mask, TexCoord).rgb;
             vec3 blendedColor = mix(diffuseTexColor, diffuseTexColor * changeColor, maskValue);
@@ -275,7 +284,7 @@ const char* characterFragmentShaderSource = R"(
 
             vec3 reflectedColor = texture(cubemap, ReflectDir).rgb;
             reflectedColor *= specularMask;
-            color = mix(color, reflectedColor, 0.3f);
+            color = mix(color, reflectedColor, 0.35f);
 
             FragColor = vec4(color, 1.0f);
         }
@@ -514,14 +523,28 @@ int main() {
 
         // Update animation state based on the state machine
         if (animationStateMachine.state_cast<const Idle*>() != nullptr) {
-            currentAnimationIndex = 0; // Idle animation
+            if (!idleAnimationSelected) {
+                currentAnimationIndex = distIdle(gen); // Randomly select an idle animation index
+                // Ensure we skip the running animation
+                if (currentAnimationIndex == 1) {
+                    currentAnimationIndex = 2; // Force it to use the second idle animation
+                }
+                modelLoader.setCurrentAnimation(animationNames[currentAnimationIndex]);
+                idleAnimationSelected = true; // Set the flag to indicate an animation is selected
+            }
         }
-        else if (animationStateMachine.state_cast<const Running*>() != nullptr) {
+        else {
+            idleAnimationSelected = false; // Reset the flag when not in idle state
+        }
+
+        if (animationStateMachine.state_cast<const Running*>() != nullptr) {
             currentAnimationIndex = 1; // Running animation
+            modelLoader.setCurrentAnimation(animationNames[currentAnimationIndex]);
         }
         else if (animationStateMachine.state_cast<const Wandering*>() != nullptr) {
             // Wandering state behavior
             currentAnimationIndex = 1; // Use running animation for wandering
+            modelLoader.setCurrentAnimation(animationNames[currentAnimationIndex]);
             isMoving = true;
 
             // Update rotation angle randomly at intervals
@@ -541,8 +564,6 @@ int main() {
 
         // Update camera position to follow the character
         updateCameraPosition(camera, characterPosition);
-
-        modelLoader.setCurrentAnimation(animationNames[currentAnimationIndex]);
 
         animationTime = glfwGetTime(); // Use the actual elapsed time for animation
         modelLoader.updateBoneTransforms(animationTime, animationNames, currentAnimationIndex);

@@ -400,15 +400,20 @@ void ModelLoader::processAnimations() {
         Animation anim2(aiAnim->mName.C_Str(), aiAnim->mDuration,
             aiAnim->mTicksPerSecond != 0 ? aiAnim->mTicksPerSecond : 25.0,
             59, 78);
+        Animation anim3(aiAnim->mName.C_Str(), aiAnim->mDuration,
+            aiAnim->mTicksPerSecond != 0 ? aiAnim->mTicksPerSecond : 25.0,
+            79, 137);
 
         for (unsigned int j = 0; j < aiAnim->mNumChannels; ++j) {
             const aiNodeAnim* nodeAnim = aiAnim->mChannels[j];
             anim1.channels[nodeAnim->mNodeName.data] = nodeAnim;
             anim2.channels[nodeAnim->mNodeName.data] = nodeAnim;
+            anim3.channels[nodeAnim->mNodeName.data] = nodeAnim;
         }
 
         animations["combat_sword_idle"] = anim1;
         animations["combat_sword_move_front"] = anim2;
+        animations["ui_pr_idle"] = anim3;
     }
 }
 
@@ -425,7 +430,7 @@ void ModelLoader::setCurrentAnimation(const std::string& name) {
 
 void ModelLoader::updateHeadRotation(float deltaTime, std::vector<std::string> animationNames, int currentAnimationIndex) {
     // Check if current animation is "combat_sword_idle"
-    if (animationNames[currentAnimationIndex] == "combat_sword_idle") {
+    if (animationNames[currentAnimationIndex] == "combat_sword_idle" || animationNames[currentAnimationIndex] == "ui_pr_idle") {
         headRotationTimer += deltaTime;
 
         // Change head pose every 3 seconds
