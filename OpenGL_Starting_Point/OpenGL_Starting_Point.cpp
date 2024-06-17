@@ -42,6 +42,8 @@ unsigned int cubemapTexture;
 unsigned int visorCubemapTexture;
 unsigned int characterMaskTexture;
 
+glm::vec3 currentArmorColor;
+
 int currentAnimationIndex = 0;
 float animationTime = 0.0f;
 std::vector<std::string> animationNames = { "combat_sword_idle", "combat_sword_move_front", "ui_pr_idle"};
@@ -362,9 +364,9 @@ void processInput(GLFWwindow* window) {
     if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
         camera.processKeyboardInput(GLFW_KEY_D, deltaTime);
 
-    static bool keyPressed = false;
-    if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS && !keyPressed) {
-        keyPressed = true;
+    static bool spaceKeyPressed = false;
+    if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS && !spaceKeyPressed) {
+        spaceKeyPressed = true;
         if (animationStateMachine.state_cast<const Idle*>() != nullptr) {
             animationStateMachine.process_event(StartRunning());
         }
@@ -373,7 +375,17 @@ void processInput(GLFWwindow* window) {
         }
     }
     if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_RELEASE) {
-        keyPressed = false;
+        spaceKeyPressed = false;
+    }
+
+    // Check for the "C" key press to change armor color
+    static bool cKeyPressed = false;
+    if (glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS && !cKeyPressed) {
+        cKeyPressed = true;
+        currentArmorColor = getRandomColor(); // Change the armor color
+    }
+    if (glfwGetKey(window, GLFW_KEY_C) == GLFW_RELEASE) {
+        cKeyPressed = false;
     }
 }
 
@@ -470,8 +482,8 @@ int main() {
 
     visorCubemapTexture = loadCubemap(visorfaces);
 
-    // Set the random color once
-    glm::vec3 randomColor = getRandomColor();
+    // Set the initial random color once
+    currentArmorColor = getRandomColor();
 
     glm::vec3 characterPosition(0.0f, 0.0f, 0.0f);
     float movementSpeed = 4.5f; // Adjust the speed as needed
@@ -598,7 +610,7 @@ int main() {
         glUniform3fv(glGetUniformLocation(characterShaderProgram, "specularColor"), 1, glm::value_ptr(specularColor));
         glUniform1f(glGetUniformLocation(characterShaderProgram, "shininess"), shininess);
         glUniform1f(glGetUniformLocation(characterShaderProgram, "lightIntensity"), lightIntensity);
-        glUniform3fv(glGetUniformLocation(characterShaderProgram, "changeColor"), 1, glm::value_ptr(randomColor));
+        glUniform3fv(glGetUniformLocation(characterShaderProgram, "changeColor"), 1, glm::value_ptr(currentArmorColor));
 
         // Pass the bone transformations to the vertex shader
         for (unsigned int i = 0; i < modelLoader.getBoneTransforms().size(); i++) {
