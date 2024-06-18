@@ -255,7 +255,7 @@ const char* characterFragmentShaderSource = R"(
             vec4 diffuseTexture = texture(texture_diffuse, TexCoord);
             vec3 diffuseTexColor = diffuseTexture.rgb;
             float alphaValue = diffuseTexture.a;
-            float blendFactor = 0.3f;
+            float blendFactor = 0.25f;
 
             vec3 maskValue = texture(texture_mask, TexCoord).rgb;
             vec3 blendedColor = mix(diffuseTexColor, diffuseTexColor * changeColor, maskValue);
