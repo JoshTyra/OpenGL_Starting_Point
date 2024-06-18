@@ -60,6 +60,11 @@ bool idleAnimationSelected = false; // Add this flag at the top of your file
 // Ai shit here
 AnimationStateMachine animationStateMachine;
 
+// Plane geometry shit
+unsigned int planeVAO, planeVBO;
+unsigned int planeTexture;
+unsigned int planeShaderProgram;
+
 
 // Method declarations
 unsigned int loadCubemap(std::vector<std::string> faces);
@@ -71,7 +76,9 @@ void processInput(GLFWwindow* window);
 void mouseCallback(GLFWwindow* window, double xpos, double ypos);
 void framebufferSizeCallback(GLFWwindow* window, int width, int height);
 void windowIconifyCallback(GLFWwindow* window, int iconified);
-
+void createPlane(float width, float height, float textureTiling);
+void loadPlaneTexture();
+void initPlaneShaders();
 
 unsigned int loadCubemap(std::vector<std::string> faces) {
     unsigned int textureID;
@@ -292,6 +299,36 @@ const char* characterFragmentShaderSource = R"(
         }
     )";
 
+    const char* planeVertexShaderSource = R"(
+        #version 430 core
+        layout(location = 0) in vec3 aPos;
+        layout(location = 1) in vec2 aTexCoord;
+
+        out vec2 TexCoord;
+
+        uniform mat4 model;
+        uniform mat4 view;
+        uniform mat4 projection;
+
+        void main() {
+            gl_Position = projection * view * model * vec4(aPos, 1.0);
+            TexCoord = aTexCoord;
+        }
+    )";
+
+    const char* planeFragmentShaderSource = R"(
+        #version 430 core
+        out vec4 FragColor;
+
+        in vec2 TexCoord;
+
+        uniform sampler2D texture_diffuse;
+
+        void main() {
+            FragColor = texture(texture_diffuse, TexCoord);
+        }
+    )";
+
 void initShaders() {
     // Compile and link character shader
     unsigned int characterVertexShader = glCreateShader(GL_VERTEX_SHADER);
@@ -444,6 +481,18 @@ int main() {
 
     // Initialize shaders
     initShaders();
+
+    // Initialize shaders for the plane
+    initPlaneShaders();
+
+    // Create the plane with specific size and texture tiling
+    float planeWidth = 100.0f;
+    float planeHeight = 100.0f;
+    float textureTiling = 100.0f; // Example value for tiling
+    createPlane(planeWidth, planeHeight, textureTiling);
+
+    // Load the plane texture
+    loadPlaneTexture();
 
     // Load the model and textures
     std::string staticModelPath = FileSystemUtils::getAssetFilePath("models/masterchief.fbx");
@@ -651,6 +700,21 @@ int main() {
             glDrawElements(GL_TRIANGLES, mesh.indices.size(), GL_UNSIGNED_INT, 0);
         }
 
+        // Render the plane
+        glUseProgram(planeShaderProgram);
+        glm::mat4 planeModel = glm::mat4(1.0f);
+        glUniformMatrix4fv(glGetUniformLocation(planeShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(planeModel));
+        glUniformMatrix4fv(glGetUniformLocation(planeShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(viewMatrix));
+        glUniformMatrix4fv(glGetUniformLocation(planeShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projectionMatrix));
+
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, planeTexture);
+        glUniform1i(glGetUniformLocation(planeShaderProgram, "texture_diffuse"), 0);
+
+        glBindVertexArray(planeVAO);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+        glBindVertexArray(0);
+
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
@@ -682,6 +746,45 @@ void windowIconifyCallback(GLFWwindow* window, int iconified) {
         // Window was restored
         std::cout << "Window restored" << std::endl;
     }
+}
+
+void createPlane(float width, float height, float textureTiling) {
+    float planeVertices[] = {
+        // positions                        // texture coords
+         width,  0.0f,  height,   textureTiling, 0.0f,
+        -width,  0.0f,  height,   0.0f, 0.0f,
+        -width,  0.0f, -height,   0.0f, textureTiling,
+
+         width,  0.0f,  height,   textureTiling, 0.0f,
+        -width,  0.0f, -height,   0.0f, textureTiling,
+         width,  0.0f, -height,   textureTiling, textureTiling
+    };
+
+    glGenVertexArrays(1, &planeVAO);
+    glGenBuffers(1, &planeVBO);
+    glBindVertexArray(planeVAO);
+
+    glBindBuffer(GL_ARRAY_BUFFER, planeVBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(planeVertices), planeVertices, GL_STATIC_DRAW);
+
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
+
+    glBindVertexArray(0);
+}
+
+void loadPlaneTexture() {
+    planeTexture = loadTexture(FileSystemUtils::getAssetFilePath("textures/metal plate floor ext.png").c_str());
+}
+
+void initPlaneShaders() {
+    unsigned int planeVertexShader = compileShader(GL_VERTEX_SHADER, planeVertexShaderSource);
+    unsigned int planeFragmentShader = compileShader(GL_FRAGMENT_SHADER, planeFragmentShaderSource);
+    planeShaderProgram = createShaderProgram(planeVertexShader, planeFragmentShader);
+    glDeleteShader(planeVertexShader);
+    glDeleteShader(planeFragmentShader);
 }
 
 
