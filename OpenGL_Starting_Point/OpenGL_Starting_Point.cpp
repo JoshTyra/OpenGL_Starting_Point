@@ -398,20 +398,6 @@ void processInput(GLFWwindow* window) {
     if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
         camera.processKeyboardInput(GLFW_KEY_D, deltaTime);
 
-    static bool spaceKeyPressed = false;
-    if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS && !spaceKeyPressed) {
-        spaceKeyPressed = true;
-        if (animationStateMachine.state_cast<const Idle*>() != nullptr) {
-            animationStateMachine.process_event(StartRunning());
-        }
-        else if (animationStateMachine.state_cast<const Running*>() != nullptr) {
-            animationStateMachine.process_event(StopRunning());
-        }
-    }
-    if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_RELEASE) {
-        spaceKeyPressed = false;
-    }
-
     // Check for the "C" key press to change armor color
     static bool cKeyPressed = false;
     if (glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS && !cKeyPressed) {
@@ -613,7 +599,7 @@ int main() {
         }
 
         // Update camera position to follow the character
-        updateCameraPosition(camera, characterPosition);
+        //updateCameraPosition(camera, characterPosition);
 
         // Update animations with the current blend factor
         animationTime = glfwGetTime(); // Use the actual elapsed time for animation
