@@ -258,25 +258,22 @@ const char* characterFragmentShaderSource = R"(
         vec3 normal = texture(texture_normal, TexCoord).rgb;
         normal = normal * 2.0f - 1.0f;
         normal.y = -normal.y;
-        normal = normalize(normal);
+        normal = normalize(normal);  // Apply bump strength
 
         vec4 diffuseTexture = texture(texture_diffuse, TexCoord);
         vec3 diffuseTexColor = diffuseTexture.rgb;
         float alphaValue = diffuseTexture.a;
-        float blendFactor = 0.2f;
 
         vec3 maskValue = texture(texture_mask, TexCoord).rgb;
         vec3 blendedColor = mix(diffuseTexColor, diffuseTexColor * changeColor, maskValue);
 
-        vec3 alphaBlendedColor = mix(blendedColor, blendedColor * alphaValue, blendFactor);
-
         float specularMask = diffuseTexture.a;
 
-        vec3 ambient = ambientColor * alphaBlendedColor;
+        vec3 ambient = ambientColor * blendedColor;
 
         vec3 lightDir = normalize(TangentLightDir);
         float diff = max(dot(normal, lightDir), 0.0f) * lightIntensity;
-        vec3 diffuse = diffuseColor * diff * alphaBlendedColor;
+        vec3 diffuse = diffuseColor * diff * blendedColor;
 
         vec3 viewDir = normalize(TangentViewPos - TangentFragPos);
         vec3 halfwayDir = normalize(lightDir + viewDir);
@@ -294,7 +291,7 @@ const char* characterFragmentShaderSource = R"(
 
         vec3 reflectedColor = texture(cubemap, ReflectDir).rgb;
         reflectedColor *= specularMask;
-        color = mix(color, reflectedColor, 0.35f);
+        color = mix(color, reflectedColor, 0.45f);
 
         FragColor = vec4(color, 1.0f);
     }
@@ -357,21 +354,20 @@ glm::vec3 hexToRGB(const std::string& hex) {
 }
 
 std::vector<std::string> colorCodes = {
-    "#C13E3E", // Multiplayer Red
-    "#3639C9", // Multiplayer Blue
-    "#C9BA36", // Multiplayer Gold/Yellow
-    "#208A20", // Multiplayer Green
-    "#B53C8A", // Multiplayer Purple
-    "#DF9735", // Multiplayer Orange
-    "#744821", // Multiplayer Brown
-    "#EB7EC5", // Multiplayer Pink
-    "#D2D2D2", // Multiplayer White
-    "#758550", // Campaign Color Lighter
-    "#55613A", // Campaign Color Darker
-    "#707E71", // Halo ce multiplayer gray
-    "#01FFFF", // Halo ce multiplayer cyan
-    "#6493ED", // Halo ce multiplayer cobalt
-    "#C69C6C", // Halo ce multiplayer tan
+    "#993B3B", // Multiplayer Red
+    "#3B4799", // Multiplayer Blue
+    "#AF8B25", // Multiplayer Gold/Yellow
+    "#32931B", // Multiplayer Green
+    "#801B93", // Multiplayer Purple
+    "#FFB732", // Multiplayer Orange
+    "#582C01", // Multiplayer Brown
+    "#CF3D81", // Multiplayer Pink
+    "#BABABA", // Multiplayer White
+    "#687746", // Campaign Color
+    "#606060", // Halo ce multiplayer gray
+    "#008888", // Halo ce multiplayer cyan
+    "#2A7EF5", // Halo ce multiplayer cobalt
+    "#806C52" // Halo ce multiplayer tan
 };
 
 glm::vec3 getRandomColor() {
@@ -607,10 +603,10 @@ int main() {
         // Set up lighting uniforms
         glm::vec3 lightDir = glm::normalize(glm::vec3(0.3f, 1.0f, 0.5f));
         glm::vec3 viewPos = camera.getPosition();
-        glm::vec3 ambientColor = glm::vec3(0.4f, 0.4f, 0.4f);
+        glm::vec3 ambientColor = glm::vec3(0.5f, 0.5f, 0.5f);
         glm::vec3 diffuseColor = glm::vec3(1.0f, 1.0f, 1.0f);
-        glm::vec3 specularColor = glm::vec3(0.4f, 0.4f, 0.4f);
-        float shininess = 32.0f;
+        glm::vec3 specularColor = glm::vec3(0.5f, 0.5f, 0.5f);
+        float shininess = 16.0f;
         float lightIntensity = 1.25f;
 
         glUniform3fv(glGetUniformLocation(characterShaderProgram, "lightDir"), 1, glm::value_ptr(lightDir));
