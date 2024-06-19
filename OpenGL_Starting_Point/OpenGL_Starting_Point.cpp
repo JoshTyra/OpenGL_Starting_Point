@@ -551,7 +551,7 @@ int main() {
     const float autonomousInterval = 5.0f; // Interval to change state
 
     // Define a blend speed multiplier
-    const float blendSpeed = 4.0f; // Increase this value to make transitions faster
+    const float blendSpeed = 5.0f; // Increase this value to make transitions faster
 
     // Main render loop
     while (!glfwWindowShouldClose(window)) {
@@ -570,6 +570,18 @@ int main() {
         projectionMatrix = camera.getProjectionMatrix(static_cast<float>(WIDTH) / static_cast<float>(HEIGHT));
         viewMatrix = camera.getViewMatrix();
 
+        // Autonomous behavior logic
+        autonomousTimer += deltaTime;
+        if (autonomousTimer >= autonomousInterval) {
+            if (animationStateMachine.state_cast<const Idle*>() != nullptr) {
+                animationStateMachine.process_event(StartWandering());
+            }
+            else if (animationStateMachine.state_cast<const Wandering*>() != nullptr) {
+                animationStateMachine.process_event(StopWandering());
+            }
+            autonomousTimer = 0.0f; // Reset timer
+        }
+
         // Update animation state based on the state machine
         if (animationStateMachine.state_cast<const Idle*>() != nullptr) {
             currentAnimationIndex = 0; // Idle animation
@@ -579,13 +591,34 @@ int main() {
             currentAnimationIndex = 1; // Running animation
             blendFactor = glm::min(1.0f, blendFactor + blendSpeed * deltaTime); // Increase blend factor smoothly
         }
+        else if (animationStateMachine.state_cast<const Wandering*>() != nullptr) {
+            // Wandering state behavior
+            currentAnimationIndex = 1; // Use running animation for wandering
+            blendFactor = glm::min(1.0f, blendFactor + blendSpeed * deltaTime); // Increase blend factor smoothly
+            isMoving = true;
 
-        std::vector<float> blendWeights = { 1.0f - blendFactor, blendFactor };
+            // Update rotation angle randomly at intervals
+            timeSinceLastChange += deltaTime;
+            if (timeSinceLastChange >= changeInterval) {
+                currentRotationAngle += dis(gen); // Apply a random change in rotation angle
+                timeSinceLastChange = 0.0f; // Reset timer
+            }
+
+            // Calculate the new forward direction based on the current rotation
+            glm::mat4 rotationMatrix = glm::rotate(glm::mat4(1.0f), currentRotationAngle, glm::vec3(0.0f, 1.0f, 0.0f));
+            glm::vec3 forwardDirection = glm::normalize(glm::vec3(rotationMatrix * glm::vec4(1.0f, 0.0f, 0.0f, 0.0f)));
+
+            // Update character position
+            updateCharacterPosition(characterPosition, forwardDirection, movementSpeed, deltaTime);
+        }
+
+        // Update camera position to follow the character
+        updateCameraPosition(camera, characterPosition);
 
         // Update animations with the current blend factor
-        animationTime = glfwGetTime();
+        animationTime = glfwGetTime(); // Use the actual elapsed time for animation
         modelLoader.updateBoneTransforms(animationTime, animationNames, blendFactor);
-        modelLoader.updateHeadRotation(deltaTime, animationNames, currentAnimationIndex);
+        modelLoader.updateHeadRotation(deltaTime, animationNames, currentAnimationIndex); // Update head rotation with deltaTime
 
         glUseProgram(characterShaderProgram);
 
