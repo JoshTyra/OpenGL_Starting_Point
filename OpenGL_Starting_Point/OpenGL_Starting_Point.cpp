@@ -46,11 +46,12 @@ glm::vec3 currentArmorColor;
 
 int currentAnimationIndex = 0;
 float animationTime = 0.0f;
-std::vector<std::string> animationNames = { "combat_sword_idle", "combat_sword_move_front", "ui_pr_idle"};
+std::vector<std::string> animationNames = { "combat_sword_idle", "combat_sword_move_front" };
+float blendFactor = 0.0f; // 0.0 means fully "combat_sword_idle", 1.0 means fully "combat_sword_move_front"
 
 std::random_device rd;
 std::mt19937 gen(rd());
-std::uniform_int_distribution<> distIdle(0, 2); // Update to include the indices 0 and 2
+std::uniform_int_distribution<> distIdle(0, 0); // Update to include the indices 0 and 2
 
 // Add these variables at the top of your file
 float idleAnimationChangeTimer = 0.0f;
@@ -231,103 +232,103 @@ const char* characterVertexShaderSource = R"(
     )";
 
 const char* characterFragmentShaderSource = R"(
-        #version 430 core
+    #version 430 core
 
-        out vec4 FragColor;
+    out vec4 FragColor;
 
-        in vec2 TexCoord;
-        in vec3 TangentLightDir;
-        in vec3 TangentViewPos;
-        in vec3 TangentFragPos;
-        in vec3 ReflectDir;
+    in vec2 TexCoord;
+    in vec3 TangentLightDir;
+    in vec3 TangentViewPos;
+    in vec3 TangentFragPos;
+    in vec3 ReflectDir;
 
-        uniform vec3 ambientColor;
-        uniform vec3 diffuseColor;
-        uniform vec3 specularColor;
-        uniform float shininess;
+    uniform vec3 ambientColor;
+    uniform vec3 diffuseColor;
+    uniform vec3 specularColor;
+    uniform float shininess;
 
-        uniform sampler2D texture_diffuse;
-        uniform sampler2D texture_normal;
-        uniform sampler2D texture_mask;
-        uniform samplerCube cubemap;
-        uniform float lightIntensity;
-        uniform vec3 changeColor;
+    uniform sampler2D texture_diffuse;
+    uniform sampler2D texture_normal;
+    uniform sampler2D texture_mask;
+    uniform samplerCube cubemap;
+    uniform float lightIntensity;
+    uniform vec3 changeColor;
 
-        void main() {
-            vec3 normal = texture(texture_normal, TexCoord).rgb;
-            normal = normal * 2.0f - 1.0f;
-            normal.y = -normal.y;
-            normal = normalize(normal);
+    void main() {
+        vec3 normal = texture(texture_normal, TexCoord).rgb;
+        normal = normal * 2.0f - 1.0f;
+        normal.y = -normal.y;
+        normal = normalize(normal);
 
-            vec4 diffuseTexture = texture(texture_diffuse, TexCoord);
-            vec3 diffuseTexColor = diffuseTexture.rgb;
-            float alphaValue = diffuseTexture.a;
-            float blendFactor = 0.25f;
+        vec4 diffuseTexture = texture(texture_diffuse, TexCoord);
+        vec3 diffuseTexColor = diffuseTexture.rgb;
+        float alphaValue = diffuseTexture.a;
+        float blendFactor = 0.2f;
 
-            vec3 maskValue = texture(texture_mask, TexCoord).rgb;
-            vec3 blendedColor = mix(diffuseTexColor, diffuseTexColor * changeColor, maskValue);
+        vec3 maskValue = texture(texture_mask, TexCoord).rgb;
+        vec3 blendedColor = mix(diffuseTexColor, diffuseTexColor * changeColor, maskValue);
 
-            vec3 alphaBlendedColor = mix(blendedColor, blendedColor * alphaValue, blendFactor);
+        vec3 alphaBlendedColor = mix(blendedColor, blendedColor * alphaValue, blendFactor);
 
-            float specularMask = diffuseTexture.a;
+        float specularMask = diffuseTexture.a;
 
-            vec3 ambient = ambientColor * alphaBlendedColor;
+        vec3 ambient = ambientColor * alphaBlendedColor;
 
-            vec3 lightDir = normalize(TangentLightDir);
-            float diff = max(dot(normal, lightDir), 0.0f) * lightIntensity;
-            vec3 diffuse = diffuseColor * diff * alphaBlendedColor;
+        vec3 lightDir = normalize(TangentLightDir);
+        float diff = max(dot(normal, lightDir), 0.0f) * lightIntensity;
+        vec3 diffuse = diffuseColor * diff * alphaBlendedColor;
 
-            vec3 viewDir = normalize(TangentViewPos - TangentFragPos);
-            vec3 halfwayDir = normalize(lightDir + viewDir);
-            float spec = pow(max(dot(normal, halfwayDir), 0.0), shininess) * lightIntensity;
-            vec3 specular = specularColor * spec * specularMask;
+        vec3 viewDir = normalize(TangentViewPos - TangentFragPos);
+        vec3 halfwayDir = normalize(lightDir + viewDir);
+        float spec = pow(max(dot(normal, halfwayDir), 0.0), shininess) * lightIntensity;
+        vec3 specular = specularColor * spec * specularMask;
 
-            float fresnelBias = 0.1f;
-            float fresnelScale = 1.0f;
-            float fresnelPower = 1.0f;
-            vec3 I = normalize(TangentFragPos - TangentViewPos);
-            float fresnel = fresnelBias + fresnelScale * pow(1.0f - dot(I, normal), fresnelPower);
-            specular *= fresnel;
+        float fresnelBias = 0.1f;
+        float fresnelScale = 1.0f;
+        float fresnelPower = 1.0f;
+        vec3 I = normalize(TangentFragPos - TangentViewPos);
+        float fresnel = fresnelBias + fresnelScale * pow(1.0f - dot(I, normal), fresnelPower);
+        specular *= fresnel;
 
-            vec3 color = ambient + diffuse + specular;
+        vec3 color = ambient + diffuse + specular;
 
-            vec3 reflectedColor = texture(cubemap, ReflectDir).rgb;
-            reflectedColor *= specularMask;
-            color = mix(color, reflectedColor, 0.35f);
+        vec3 reflectedColor = texture(cubemap, ReflectDir).rgb;
+        reflectedColor *= specularMask;
+        color = mix(color, reflectedColor, 0.35f);
 
-            FragColor = vec4(color, 1.0f);
-        }
-    )";
+        FragColor = vec4(color, 1.0f);
+    }
+)";
 
-    const char* planeVertexShaderSource = R"(
-        #version 430 core
-        layout(location = 0) in vec3 aPos;
-        layout(location = 1) in vec2 aTexCoord;
+const char* planeVertexShaderSource = R"(
+    #version 430 core
+    layout(location = 0) in vec3 aPos;
+    layout(location = 1) in vec2 aTexCoord;
 
-        out vec2 TexCoord;
+    out vec2 TexCoord;
 
-        uniform mat4 model;
-        uniform mat4 view;
-        uniform mat4 projection;
+    uniform mat4 model;
+    uniform mat4 view;
+    uniform mat4 projection;
 
-        void main() {
-            gl_Position = projection * view * model * vec4(aPos, 1.0);
-            TexCoord = aTexCoord;
-        }
-    )";
+    void main() {
+        gl_Position = projection * view * model * vec4(aPos, 1.0);
+        TexCoord = aTexCoord;
+    }
+)";
 
-    const char* planeFragmentShaderSource = R"(
-        #version 430 core
-        out vec4 FragColor;
+const char* planeFragmentShaderSource = R"(
+    #version 430 core
+    out vec4 FragColor;
 
-        in vec2 TexCoord;
+    in vec2 TexCoord;
 
-        uniform sampler2D texture_diffuse;
+    uniform sampler2D texture_diffuse;
 
-        void main() {
-            FragColor = texture(texture_diffuse, TexCoord);
-        }
-    )";
+    void main() {
+        FragColor = texture(texture_diffuse, TexCoord);
+    }
+)";
 
 void initShaders() {
     // Compile and link character shader
@@ -553,6 +554,9 @@ int main() {
     float autonomousTimer = 0.0f;
     const float autonomousInterval = 5.0f; // Interval to change state
 
+    // Define a blend speed multiplier
+    const float blendSpeed = 4.0f; // Increase this value to make transitions faster
+
     // Main render loop
     while (!glfwWindowShouldClose(window)) {
         float currentFrame = static_cast<float>(glfwGetTime());
@@ -570,65 +574,22 @@ int main() {
         projectionMatrix = camera.getProjectionMatrix(static_cast<float>(WIDTH) / static_cast<float>(HEIGHT));
         viewMatrix = camera.getViewMatrix();
 
-        // Autonomous behavior logic
-        autonomousTimer += deltaTime;
-        if (autonomousTimer >= autonomousInterval) {
-            if (animationStateMachine.state_cast<const Idle*>() != nullptr) {
-                animationStateMachine.process_event(StartWandering());
-            }
-            else if (animationStateMachine.state_cast<const Wandering*>() != nullptr) {
-                animationStateMachine.process_event(StopWandering());
-            }
-            autonomousTimer = 0.0f; // Reset timer
-        }
-
         // Update animation state based on the state machine
         if (animationStateMachine.state_cast<const Idle*>() != nullptr) {
-            if (!idleAnimationSelected) {
-                currentAnimationIndex = distIdle(gen); // Randomly select an idle animation index
-                // Ensure we skip the running animation
-                if (currentAnimationIndex == 1) {
-                    currentAnimationIndex = 2; // Force it to use the second idle animation
-                }
-                modelLoader.setCurrentAnimation(animationNames[currentAnimationIndex]);
-                idleAnimationSelected = true; // Set the flag to indicate an animation is selected
-            }
+            currentAnimationIndex = 0; // Idle animation
+            blendFactor = glm::max(0.0f, blendFactor - blendSpeed * deltaTime); // Decrease blend factor smoothly
         }
-        else {
-            idleAnimationSelected = false; // Reset the flag when not in idle state
-        }
-
-        if (animationStateMachine.state_cast<const Running*>() != nullptr) {
+        else if (animationStateMachine.state_cast<const Running*>() != nullptr) {
             currentAnimationIndex = 1; // Running animation
-            modelLoader.setCurrentAnimation(animationNames[currentAnimationIndex]);
-        }
-        else if (animationStateMachine.state_cast<const Wandering*>() != nullptr) {
-            // Wandering state behavior
-            currentAnimationIndex = 1; // Use running animation for wandering
-            modelLoader.setCurrentAnimation(animationNames[currentAnimationIndex]);
-            isMoving = true;
-
-            // Update rotation angle randomly at intervals
-            timeSinceLastChange += deltaTime;
-            if (timeSinceLastChange >= changeInterval) {
-                currentRotationAngle += dis(gen); // Apply a random change in rotation angle
-                timeSinceLastChange = 0.0f; // Reset timer
-            }
-
-            // Calculate the new forward direction based on the current rotation
-            glm::mat4 rotationMatrix = glm::rotate(glm::mat4(1.0f), currentRotationAngle, glm::vec3(0.0f, 1.0f, 0.0f));
-            glm::vec3 forwardDirection = glm::normalize(glm::vec3(rotationMatrix * glm::vec4(1.0f, 0.0f, 0.0f, 0.0f)));
-
-            // Update character position
-            updateCharacterPosition(characterPosition, forwardDirection, movementSpeed, deltaTime);
+            blendFactor = glm::min(1.0f, blendFactor + blendSpeed * deltaTime); // Increase blend factor smoothly
         }
 
-        // Update camera position to follow the character
-        updateCameraPosition(camera, characterPosition);
+        std::vector<float> blendWeights = { 1.0f - blendFactor, blendFactor };
 
-        animationTime = glfwGetTime(); // Use the actual elapsed time for animation
-        modelLoader.updateBoneTransforms(animationTime, animationNames, currentAnimationIndex);
-        modelLoader.updateHeadRotation(deltaTime, animationNames, currentAnimationIndex); // Update head rotation with deltaTime
+        // Update animations with the current blend factor
+        animationTime = glfwGetTime();
+        modelLoader.updateBoneTransforms(animationTime, animationNames, blendFactor);
+        modelLoader.updateHeadRotation(deltaTime, animationNames, currentAnimationIndex);
 
         glUseProgram(characterShaderProgram);
 
@@ -786,5 +747,3 @@ void initPlaneShaders() {
     glDeleteShader(planeVertexShader);
     glDeleteShader(planeFragmentShader);
 }
-
-

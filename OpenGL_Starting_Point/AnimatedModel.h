@@ -38,11 +38,12 @@ struct Animation {
     double startTime; // Start time in ticks
     double endTime;   // End time in ticks
     std::map<std::string, const aiNodeAnim*> channels;
+    float blendWeight;
 
-    Animation() : duration(0.0), ticksPerSecond(0.0), startTime(0.0), endTime(0.0) {}
+    Animation() : duration(0.0), ticksPerSecond(0.0), startTime(0.0), endTime(0.0), blendWeight(0.0f) {}
 
-    Animation(const std::string& animName, double dur, double ticksPerSec, double start, double end)
-        : name(animName), duration(dur), ticksPerSecond(ticksPerSec), startTime(start), endTime(end) {}
+    Animation(const std::string& animName, double dur, double ticksPerSec, double start, double end, float weight)
+        : name(animName), duration(dur), ticksPerSecond(ticksPerSec), startTime(start), endTime(end), blendWeight(weight) {}
 };
 
 struct AABB {
@@ -62,7 +63,7 @@ public:
     ~ModelLoader();
 
     void loadModel(const std::string& path);
-    void updateBoneTransforms(float timeInSeconds, std::vector<std::string> animationNames, int currentAnimationIndex);
+    void updateBoneTransforms(float timeInSeconds, std::vector<std::string> animationNames, float blendFactor);
     void setCurrentAnimation(const std::string& name);
     const std::vector<Mesh>& getLoadedMeshes() const;
     const AABB& getLoadedModelAABB() const;
@@ -74,7 +75,7 @@ private:
     void processNode(aiNode* node, const aiScene* scene);
     void processMesh(aiMesh* mesh, const aiScene* scene, const aiMatrix4x4& nodeTransformation);
     void storeMesh(const std::vector<Vertex>& vertices, const std::vector<unsigned int>& indices, int meshBufferIndex);
-    void readNodeHierarchy(float animationTime, const aiNode* node, const glm::mat4& parentTransform, std::vector<std::string> animationNames, int currentAnimationIndex);
+    void readNodeHierarchy(float animationTime, const aiNode* node, const glm::mat4& parentTransform, const std::string& animationName);
     const aiNodeAnim* findNodeAnim(const Animation& animation, const std::string& nodeName);
     void calcInterpolatedScaling(aiVector3D& out, float animationTime, const aiNodeAnim* nodeAnim);
     void calcInterpolatedRotation(aiQuaternion& out, float animationTime, const aiNodeAnim* nodeAnim);

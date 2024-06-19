@@ -53,26 +53,45 @@ void ModelLoader::loadModel(const std::string& path) {
     loadedModelAABB = computeAABB(aggregatedVertices);
 }
 
-void ModelLoader::updateBoneTransforms(float timeInSeconds, std::vector<std::string> animationNames, int currentAnimationIndex) {
-    if (!scene || !currentAnimation) {
-        // Set the bone transforms to identity if no animations are found or current animation is not set
+void ModelLoader::updateBoneTransforms(float timeInSeconds, std::vector<std::string> animationNames, float blendFactor) {
+    if (!scene || animationNames.empty()) {
         boneTransforms.resize(boneInfo.size(), glm::mat4(1.0f));
         return;
     }
 
-    const Animation& animation = *currentAnimation;
-    float timeInTicks = timeInSeconds * animation.ticksPerSecond;
-
-    // Loop the animation within the specified range
-    float animationTime = fmod(timeInTicks, animation.endTime - animation.startTime) + animation.startTime;
-
     glm::mat4 identity = glm::mat4(1.0f);
-    readNodeHierarchy(animationTime, scene->mRootNode, identity, animationNames, currentAnimationIndex);
+    std::vector<glm::mat4> blendedBoneTransforms(boneInfo.size(), glm::mat4(0.0f));
 
-    boneTransforms.resize(boneInfo.size());
-    for (unsigned int i = 0; i < boneInfo.size(); i++) {
-        boneTransforms[i] = boneInfo[i].FinalTransformation;
+    float totalWeight = 0.0f;
+    for (size_t i = 0; i < animationNames.size(); ++i) {
+        const std::string& animationName = animationNames[i];
+        float weight = (i == 0) ? (1.0f - blendFactor) : blendFactor;
+
+        auto it = animations.find(animationName);
+        if (it != animations.end()) {
+            const Animation& animation = it->second;
+            float timeInTicks = timeInSeconds * animation.ticksPerSecond;
+            float animationTime = fmod(timeInTicks, animation.endTime - animation.startTime) + animation.startTime;
+
+            std::vector<glm::mat4> currentBoneTransforms(boneInfo.size(), glm::mat4(1.0f));
+            readNodeHierarchy(animationTime, scene->mRootNode, identity, animationName);
+
+            for (size_t j = 0; j < boneInfo.size(); ++j) {
+                currentBoneTransforms[j] = boneInfo[j].FinalTransformation;
+                blendedBoneTransforms[j] += currentBoneTransforms[j] * weight;
+            }
+            totalWeight += weight;
+        }
     }
+
+    // Normalize the blended transformations
+    if (totalWeight > 0.0f) {
+        for (size_t j = 0; j < boneInfo.size(); ++j) {
+            blendedBoneTransforms[j] /= totalWeight;
+        }
+    }
+
+    boneTransforms = blendedBoneTransforms;
 }
 
 const std::vector<Mesh>& ModelLoader::getLoadedMeshes() const {
@@ -217,31 +236,23 @@ void ModelLoader::storeMesh(const std::vector<Vertex>& vertices, const std::vect
     loadedMeshes.push_back(mesh);
 }
 
-void ModelLoader::readNodeHierarchy(float animationTime, const aiNode* node, const glm::mat4& parentTransform, std::vector<std::string> animationNames, int currentAnimationIndex) {
+void ModelLoader::readNodeHierarchy(float animationTime, const aiNode* node, const glm::mat4& parentTransform, const std::string& animationName) {
     std::string nodeName(node->mName.data);
-
     glm::mat4 nodeTransformation = glm::transpose(glm::make_mat4(&node->mTransformation.a1));
-
-    const aiNodeAnim* nodeAnim = findNodeAnim(*currentAnimation, nodeName);
-
+    const aiNodeAnim* nodeAnim = findNodeAnim(animations[animationName], nodeName);
     if (nodeAnim) {
         aiVector3D scaling;
         calcInterpolatedScaling(scaling, animationTime, nodeAnim);
         glm::mat4 scalingM = glm::scale(glm::mat4(1.0f), glm::vec3(scaling.x, scaling.y, scaling.z));
-
         aiQuaternion rotationQ;
         calcInterpolatedRotation(rotationQ, animationTime, nodeAnim);
         glm::mat4 rotationM = glm::mat4_cast(glm::quat(rotationQ.w, rotationQ.x, rotationQ.y, rotationQ.z));
-
         aiVector3D translation;
         calcInterpolatedPosition(translation, animationTime, nodeAnim);
         glm::mat4 translationM = glm::translate(glm::mat4(1.0f), glm::vec3(translation.x, translation.y, translation.z));
-
         nodeTransformation = translationM * rotationM * scalingM;
     }
-
     glm::mat4 globalTransformation = parentTransform * nodeTransformation;
-
     if (boneMapping.find(nodeName) != boneMapping.end()) {
         int boneIndex = boneMapping[nodeName];
         if (nodeName == "head") {
@@ -251,9 +262,8 @@ void ModelLoader::readNodeHierarchy(float animationTime, const aiNode* node, con
         }
         boneInfo[boneIndex].FinalTransformation = globalTransformation * boneInfo[boneIndex].BoneOffset;
     }
-
     for (unsigned int i = 0; i < node->mNumChildren; i++) {
-        readNodeHierarchy(animationTime, node->mChildren[i], globalTransformation, animationNames, currentAnimationIndex);
+        readNodeHierarchy(animationTime, node->mChildren[i], globalTransformation, animationName);
     }
 }
 
@@ -396,13 +406,13 @@ void ModelLoader::processAnimations() {
         // You can adjust these ranges based on your actual keyframes
         Animation anim1(aiAnim->mName.C_Str(), aiAnim->mDuration,
             aiAnim->mTicksPerSecond != 0 ? aiAnim->mTicksPerSecond : 25.0,
-            0, 58);
+            0, 58, 1.0f);
         Animation anim2(aiAnim->mName.C_Str(), aiAnim->mDuration,
             aiAnim->mTicksPerSecond != 0 ? aiAnim->mTicksPerSecond : 25.0,
-            59, 78);
+            59, 78, 1.0f);
         Animation anim3(aiAnim->mName.C_Str(), aiAnim->mDuration,
             aiAnim->mTicksPerSecond != 0 ? aiAnim->mTicksPerSecond : 25.0,
-            79, 137);
+            79, 137, 1.0f);
 
         for (unsigned int j = 0; j < aiAnim->mNumChannels; ++j) {
             const aiNodeAnim* nodeAnim = aiAnim->mChannels[j];
