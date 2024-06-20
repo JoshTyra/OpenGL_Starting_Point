@@ -291,7 +291,7 @@ const char* characterFragmentShaderSource = R"(
 
         vec3 reflectedColor = texture(cubemap, ReflectDir).rgb;
         reflectedColor *= specularMask;
-        color = mix(color, reflectedColor, 0.45f);
+        color = mix(color, reflectedColor, 0.35f);
 
         FragColor = vec4(color, 1.0f);
     }
