@@ -354,20 +354,21 @@ glm::vec3 hexToRGB(const std::string& hex) {
 }
 
 std::vector<std::string> colorCodes = {
-    "#993B3B", // Multiplayer Red
-    "#3B4799", // Multiplayer Blue
-    "#AF8B25", // Multiplayer Gold/Yellow
-    "#32931B", // Multiplayer Green
-    "#801B93", // Multiplayer Purple
-    "#FFB732", // Multiplayer Orange
-    "#582C01", // Multiplayer Brown
-    "#CF3D81", // Multiplayer Pink
-    "#BABABA", // Multiplayer White
-    "#687746", // Campaign Color
-    "#606060", // Halo ce multiplayer gray
-    "#008888", // Halo ce multiplayer cyan
-    "#2A7EF5", // Halo ce multiplayer cobalt
-    "#806C52" // Halo ce multiplayer tan
+    "#C13E3E", // Multiplayer Red
+    "#3639C9", // Multiplayer Blue
+    "#C9BA36", // Multiplayer Gold/Yellow
+    "#208A20", // Multiplayer Green
+    "#B53C8A", // Multiplayer Purple
+    "#DF9735", // Multiplayer Orange
+    "#744821", // Multiplayer Brown
+    "#EB7EC5", // Multiplayer Pink
+    "#D2D2D2", // Multiplayer White
+    "#758550", // Campaign Color Lighter
+    "#000000", // Halo ce multiplayer black
+    "#707E71", // Halo ce multiplayer gray
+    "#01FFFF", // Halo ce multiplayer cyan
+    "#6493ED", // Halo ce multiplayer cobalt
+    "#C69C6C", // Halo ce multiplayer tan
 };
 
 glm::vec3 getRandomColor() {
