@@ -995,19 +995,19 @@ void drawDebugLines() {
         float pos = i * CELL_SIZE - WORLD_SIZE / 2;
 
         // Vertical lines
-        debugVertices.insert(debugVertices.end(), { pos, 0.01f, -WORLD_SIZE / 2, 0.0f, 1.0f, 0.0f }); // Green color
-        debugVertices.insert(debugVertices.end(), { pos, 0.01f, WORLD_SIZE / 2, 0.0f, 1.0f, 0.0f });
+        debugVertices.insert(debugVertices.end(), { pos, 0.0025f, -WORLD_SIZE / 2, 0.0f, 1.0f, 0.0f }); // Green color
+        debugVertices.insert(debugVertices.end(), { pos, 0.0025f, WORLD_SIZE / 2, 0.0f, 1.0f, 0.0f });
 
         // Horizontal lines
-        debugVertices.insert(debugVertices.end(), { -WORLD_SIZE / 2, 0.01f, pos, 0.0f, 1.0f, 0.0f });
-        debugVertices.insert(debugVertices.end(), { WORLD_SIZE / 2, 0.01f, pos, 0.0f, 1.0f, 0.0f });
+        debugVertices.insert(debugVertices.end(), { -WORLD_SIZE / 2, 0.0025f, pos, 0.0f, 1.0f, 0.0f });
+        debugVertices.insert(debugVertices.end(), { WORLD_SIZE / 2, 0.0025f, pos, 0.0f, 1.0f, 0.0f });
     }
 
     // Generate path lines (yellow)
     if (!currentPath.empty()) {
         for (size_t i = 0; i < currentPath.size() - 1; i++) {
-            debugVertices.insert(debugVertices.end(), { currentPath[i].x, 0.02f, currentPath[i].z, 1.0f, 1.0f, 0.0f }); // Yellow color
-            debugVertices.insert(debugVertices.end(), { currentPath[i + 1].x, 0.02f, currentPath[i + 1].z, 1.0f, 1.0f, 0.0f });
+            debugVertices.insert(debugVertices.end(), { currentPath[i].x, 0.04f, currentPath[i].z, 1.0f, 1.0f, 0.0f }); // Yellow color
+            debugVertices.insert(debugVertices.end(), { currentPath[i + 1].x, 0.04f, currentPath[i + 1].z, 1.0f, 1.0f, 0.0f });
         }
     }
 
