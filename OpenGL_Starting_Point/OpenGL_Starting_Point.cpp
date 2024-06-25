@@ -18,6 +18,10 @@
 #include <iostream>
 #include "AnimatedModel.h"
 #include "AnimationStateMachine.h"
+#include <vector>
+#include <queue>
+#include <unordered_set>
+#include <cmath>
 
 // Constants and global variables
 const int WIDTH = 2560;
@@ -66,6 +70,26 @@ unsigned int planeVAO, planeVBO;
 unsigned int planeTexture;
 unsigned int planeShaderProgram;
 
+// Pathfinding shit
+const int GRID_SIZE = 100; // This is the one you'll change when you want to adjust the grid
+const float CELL_SIZE = 1.0f; // Size of each grid cell in world units
+const float WORLD_SIZE = GRID_SIZE * CELL_SIZE; // Total world size
+std::vector<std::vector<bool>> navigationGrid(GRID_SIZE, std::vector<bool>(GRID_SIZE, true));
+std::vector<glm::vec3> currentPath;
+int currentPathIndex = 0;
+glm::vec3 currentDestination;
+
+unsigned int debugVAO, debugVBO;
+unsigned int debugShaderProgram;
+std::vector<float> debugVertices;
+
+struct GridNode {
+    int x, y;
+    float g, h, f;
+    GridNode* parent;
+
+    GridNode(int x, int y) : x(x), y(y), g(0), h(0), f(0), parent(nullptr) {}
+};
 
 // Method declarations
 unsigned int loadCubemap(std::vector<std::string> faces);
@@ -80,6 +104,11 @@ void windowIconifyCallback(GLFWwindow* window, int iconified);
 void createPlane(float width, float height, float textureTiling);
 void loadPlaneTexture();
 void initPlaneShaders();
+bool isValidCell(int x, int y);
+float heuristic(int x1, int y1, int x2, int y2);
+std::vector<glm::vec3> findPath(const glm::vec3& start, const glm::vec3& goal);
+void drawDebugLines();
+void initDebugRendering();
 
 unsigned int loadCubemap(std::vector<std::string> faces) {
     unsigned int textureID;
@@ -327,6 +356,34 @@ const char* planeFragmentShaderSource = R"(
     }
 )";
 
+const char* debugVertexShaderSource = R"(
+    #version 430 core
+    layout (location = 0) in vec3 aPos;
+    layout (location = 1) in vec3 aColor;
+
+    out vec3 Color;
+
+    uniform mat4 view;
+    uniform mat4 projection;
+
+    void main()
+    {
+        gl_Position = projection * view * vec4(aPos, 1.0);
+        Color = aColor;
+    }
+)";
+
+const char* debugFragmentShaderSource = R"(
+    #version 430 core
+    in vec3 Color;
+    out vec4 FragColor;
+
+    void main()
+    {
+        FragColor = vec4(Color, 1.0);
+    }
+)";
+
 void initShaders() {
     // Compile and link character shader
     unsigned int characterVertexShader = glCreateShader(GL_VERTEX_SHADER);
@@ -425,6 +482,11 @@ void mouseCallback(GLFWwindow* window, double xpos, double ypos) {
     camera.processMouseMovement(xoffset, yoffset);
 }
 
+float lerpAngle(float start, float end, float t) {
+    float difference = std::fmod(end - start + 180.0f, 360.0f) - 180.0f;
+    return start + difference * t;
+}
+
 int main() {
     // Initialize GLFW
     if (!glfwInit()) {
@@ -463,6 +525,8 @@ int main() {
 
     glEnable(GL_DEPTH_TEST);
 
+    initDebugRendering();
+
     // Initialize shaders
     initShaders();
 
@@ -470,9 +534,9 @@ int main() {
     initPlaneShaders();
 
     // Create the plane with specific size and texture tiling
-    float planeWidth = 100.0f;
-    float planeHeight = 100.0f;
-    float textureTiling = 100.0f; // Example value for tiling
+    float planeWidth = WORLD_SIZE / 2;
+    float planeHeight = WORLD_SIZE / 2;
+    float textureTiling = WORLD_SIZE / 2; // Example value for tiling
     createPlane(planeWidth, planeHeight, textureTiling);
 
     // Load the plane texture
@@ -520,7 +584,6 @@ int main() {
 
     glm::vec3 characterPosition(0.0f, 0.0f, 0.0f);
     float movementSpeed = 4.5f; // Adjust the speed as needed
-    bool isMoving = false;
     float currentRotationAngle = 0.0f; // Current rotation angle
     std::random_device rd;
     std::mt19937 gen(rd());
@@ -528,17 +591,16 @@ int main() {
 
     camera.cameraLookAt(glm::vec3(-0.5f, 0.0f, 1.0f));
 
-    float timeSinceLastChange = 0.0f;
-    const float changeInterval = 2.0f; // Change direction every 2 seconds
-
     // Initialize the state machine
     animationStateMachine.initiate();
 
-    float autonomousTimer = 0.0f;
-    const float autonomousInterval = 5.0f; // Interval to change state
+    const float IDLE_DURATION = 15.0f; // 15 seconds of idle time at destination
+    const float PATH_COMPLETION_CHECK_THRESHOLD = 0.1f; // Distance threshold to consider a path point reached
+    float idleTimer = 0.0f;
 
     // Define a blend speed multiplier
     const float blendSpeed = 5.0f; // Increase this value to make transitions faster
+    glm::mat4 currentRotationMatrix = glm::mat4(1.0f);
 
     // Main render loop
     while (!glfwWindowShouldClose(window)) {
@@ -557,62 +619,105 @@ int main() {
         projectionMatrix = camera.getProjectionMatrix(static_cast<float>(WIDTH) / static_cast<float>(HEIGHT));
         viewMatrix = camera.getViewMatrix();
 
-        // Autonomous behavior logic
-        autonomousTimer += deltaTime;
-        if (autonomousTimer >= autonomousInterval) {
-            if (animationStateMachine.state_cast<const Idle*>() != nullptr) {
-                animationStateMachine.process_event(StartWandering());
-            }
-            else if (animationStateMachine.state_cast<const Wandering*>() != nullptr) {
-                animationStateMachine.process_event(StopWandering());
-            }
-            autonomousTimer = 0.0f; // Reset timer
-        }
-
         // Update animation state based on the state machine
         if (animationStateMachine.state_cast<const Idle*>() != nullptr) {
             currentAnimationIndex = 0; // Idle animation
             blendFactor = glm::max(0.0f, blendFactor - blendSpeed * deltaTime); // Decrease blend factor smoothly
-        }
-        else if (animationStateMachine.state_cast<const Running*>() != nullptr) {
-            currentAnimationIndex = 1; // Running animation
-            blendFactor = glm::min(1.0f, blendFactor + blendSpeed * deltaTime); // Increase blend factor smoothly
+
+            idleTimer += deltaTime;
+            if (idleTimer >= IDLE_DURATION) {
+                // Generate new path after idle duration
+                float randX = std::clamp(std::uniform_real_distribution<float>(-GRID_SIZE / 2, GRID_SIZE / 2)(gen),
+                    -GRID_SIZE / 2.0f + 1.0f, GRID_SIZE / 2.0f - 1.0f);
+                float randZ = std::clamp(std::uniform_real_distribution<float>(-GRID_SIZE / 2, GRID_SIZE / 2)(gen),
+                    -GRID_SIZE / 2.0f + 1.0f, GRID_SIZE / 2.0f - 1.0f);
+                currentDestination = glm::vec3(randX, 0.0f, randZ);
+
+                currentPath = findPath(characterPosition, currentDestination);
+                if (!currentPath.empty()) {
+                    currentPathIndex = 0;
+                    idleTimer = 0.0f;
+                    std::cout << "New path generated. Start: " << glm::to_string(characterPosition)
+                        << ", End: " << glm::to_string(currentDestination) << std::endl;
+                    animationStateMachine.process_event(StartWandering());
+                }
+                else {
+                    std::cout << "Failed to generate path. Will try again next frame." << std::endl;
+                    idleTimer = IDLE_DURATION; // Try again next frame
+                }
+            }
         }
         else if (animationStateMachine.state_cast<const Wandering*>() != nullptr) {
-            // Wandering state behavior
             currentAnimationIndex = 1; // Use running animation for wandering
-            blendFactor = glm::min(1.0f, blendFactor + blendSpeed * deltaTime); // Increase blend factor smoothly
-            isMoving = true;
+            blendFactor = glm::min(1.0f, blendFactor + blendSpeed * deltaTime);
 
-            // Update rotation angle randomly at intervals
-            timeSinceLastChange += deltaTime;
-            if (timeSinceLastChange >= changeInterval) {
-                currentRotationAngle += dis(gen); // Apply a random change in rotation angle
-                timeSinceLastChange = 0.0f; // Reset timer
+            // Check for invalid character position
+            if (std::isnan(characterPosition.x) || std::isnan(characterPosition.y) || std::isnan(characterPosition.z)) {
+                std::cout << "Invalid character position detected. Resetting to (0, 0, 0)." << std::endl;
+                characterPosition = glm::vec3(0.0f, 0.0f, 0.0f);
             }
 
-            // Calculate the new forward direction based on the current rotation
-            glm::mat4 rotationMatrix = glm::rotate(glm::mat4(1.0f), currentRotationAngle, glm::vec3(0.0f, 1.0f, 0.0f));
-            glm::vec3 forwardDirection = glm::normalize(glm::vec3(rotationMatrix * glm::vec4(1.0f, 0.0f, 0.0f, 0.0f)));
+            // Follow the current path
+            if (!currentPath.empty() && currentPathIndex < currentPath.size()) {
+                glm::vec3 targetPosition = currentPath[currentPathIndex];
+                glm::vec3 direction = targetPosition - characterPosition;
 
-            // Update character position
-            updateCharacterPosition(characterPosition, forwardDirection, movementSpeed, deltaTime);
+                // Check if the direction is valid
+                if (glm::length(direction) > PATH_COMPLETION_CHECK_THRESHOLD) {
+                    direction = glm::normalize(direction);
+
+                    // Calculate target rotation
+                    float targetRotation = std::atan2(-direction.z, direction.x);
+
+                    // Interpolate current rotation towards target rotation
+                    float rotationSpeed = 2.0f; // Adjust this value to control rotation speed
+                    float newRotation = lerpAngle(currentRotationAngle, targetRotation, rotationSpeed * deltaTime);
+
+                    // Update rotation matrix
+                    currentRotationMatrix = glm::rotate(glm::mat4(1.0f), newRotation, glm::vec3(0.0f, 1.0f, 0.0f));
+
+                    // Update current rotation angle
+                    currentRotationAngle = newRotation;
+
+                    // Move towards the next point in the path
+                    glm::vec3 movement = direction * movementSpeed * deltaTime;
+                    characterPosition += movement;
+
+                    // Clamp character position to grid bounds
+                    characterPosition = glm::clamp(characterPosition,
+                        glm::vec3(-GRID_SIZE / 2.0f + 1.0f, 0.0f, -GRID_SIZE / 2.0f + 1.0f),
+                        glm::vec3(GRID_SIZE / 2.0f - 1.0f, 0.0f, GRID_SIZE / 2.0f - 1.0f));
+                }
+                else {
+                    // We've reached the current target, move to the next one
+                    currentPathIndex++;
+                }
+            }
+
+            // Check if the entire path is completed
+            if (currentPathIndex >= currentPath.size()) {
+                // Path is complete, transition to Idle
+                animationStateMachine.process_event(PathComplete());
+                currentPath.clear();
+                currentPathIndex = 0;
+                idleTimer = 0.0f;
+            }
         }
 
-        // Update camera position to follow the character
-        //updateCameraPosition(camera, characterPosition);
+        std::cout << "Character position: " << glm::to_string(characterPosition) << std::endl;
 
         // Update animations with the current blend factor
         animationTime = glfwGetTime(); // Use the actual elapsed time for animation
         modelLoader.updateBoneTransforms(animationTime, animationNames, blendFactor);
-        modelLoader.updateHeadRotation(deltaTime, animationNames, currentAnimationIndex); // Update head rotation with deltaTime
+        modelLoader.updateHeadRotation(deltaTime, animationNames, currentAnimationIndex);
 
+        // Render the character
         glUseProgram(characterShaderProgram);
 
-        // Set up model matrix
+        // Set up model matrix with updated rotation
         glm::mat4 modelMatrix = glm::mat4(1.0f);
         modelMatrix = glm::translate(modelMatrix, characterPosition);
-        modelMatrix = glm::rotate(modelMatrix, currentRotationAngle, glm::vec3(0.0f, 1.0f, 0.0f)); // Rotate based on current angle
+        modelMatrix = modelMatrix * currentRotationMatrix; // Apply the rotation
         modelMatrix = glm::rotate(modelMatrix, glm::radians(90.0f), glm::vec3(-1.0f, 0.0f, 0.0f)); // Rotate to stand upright
         modelMatrix = glm::scale(modelMatrix, glm::vec3(0.025f)); // Scale the character
 
@@ -623,9 +728,9 @@ int main() {
         // Set up lighting uniforms
         glm::vec3 lightDir = glm::normalize(glm::vec3(0.3f, 1.0f, 0.5f));
         glm::vec3 viewPos = camera.getPosition();
-        glm::vec3 ambientColor = glm::vec3(0.5f, 0.5f, 0.5f);
+        glm::vec3 ambientColor = glm::vec3(0.45f, 0.45f, 0.45f);
         glm::vec3 diffuseColor = glm::vec3(1.0f, 1.0f, 1.0f);
-        glm::vec3 specularColor = glm::vec3(0.5f, 0.5f, 0.5f);
+        glm::vec3 specularColor = glm::vec3(0.6f, 0.6f, 0.6f);
         float shininess = 16.0f;
         float lightIntensity = 1.25f;
 
@@ -692,6 +797,8 @@ int main() {
         glDrawArrays(GL_TRIANGLES, 0, 6);
         glBindVertexArray(0);
 
+        drawDebugLines();
+
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
@@ -703,6 +810,9 @@ int main() {
         glDeleteBuffers(1, &mesh.EBO);
     }
     glDeleteProgram(characterShaderProgram);
+    glDeleteVertexArrays(1, &debugVAO);
+    glDeleteBuffers(1, &debugVBO);
+    glDeleteProgram(debugShaderProgram);
 
     glfwTerminate();
     return 0;
@@ -728,13 +838,13 @@ void windowIconifyCallback(GLFWwindow* window, int iconified) {
 void createPlane(float width, float height, float textureTiling) {
     float planeVertices[] = {
         // positions                        // texture coords
-         width,  0.0f,  height,   textureTiling, 0.0f,
-        -width,  0.0f,  height,   0.0f, 0.0f,
-        -width,  0.0f, -height,   0.0f, textureTiling,
+         WORLD_SIZE / 2,  0.0f,  WORLD_SIZE / 2,   textureTiling, 0.0f,
+        -WORLD_SIZE / 2,  0.0f,  WORLD_SIZE / 2,   0.0f, 0.0f,
+        -WORLD_SIZE / 2,  0.0f, -WORLD_SIZE / 2,   0.0f, textureTiling,
 
-         width,  0.0f,  height,   textureTiling, 0.0f,
-        -width,  0.0f, -height,   0.0f, textureTiling,
-         width,  0.0f, -height,   textureTiling, textureTiling
+         WORLD_SIZE / 2,  0.0f,  WORLD_SIZE / 2,   textureTiling, 0.0f,
+        -WORLD_SIZE / 2,  0.0f, -WORLD_SIZE / 2,   0.0f, textureTiling,
+         WORLD_SIZE / 2,  0.0f, -WORLD_SIZE / 2,   textureTiling, textureTiling
     };
 
     glGenVertexArrays(1, &planeVAO);
@@ -762,4 +872,175 @@ void initPlaneShaders() {
     planeShaderProgram = createShaderProgram(planeVertexShader, planeFragmentShader);
     glDeleteShader(planeVertexShader);
     glDeleteShader(planeFragmentShader);
+}
+
+// Function to check if a cell is valid and walkable
+bool isValidCell(int x, int y) {
+    if (x < 0 || x >= GRID_SIZE || y < 0 || y >= GRID_SIZE) {
+        std::cout << "Cell out of bounds: (" << x << ", " << y << ")" << std::endl;
+        return false;
+    }
+    return navigationGrid[x][y];
+}
+
+// Heuristic function for A* (Manhattan distance)
+float heuristic(int x1, int y1, int x2, int y2) {
+    return std::abs(x1 - x2) + std::abs(y1 - y2);
+}
+
+std::vector<glm::vec3> findPath(const glm::vec3& start, const glm::vec3& goal) {
+    if (glm::distance(start, goal) < 0.1f) {
+        std::cout << "Start and goal positions are the same. No path needed." << std::endl;
+        return std::vector<glm::vec3>();
+    }
+
+    if (std::isnan(start.x) || std::isnan(start.y) || std::isnan(start.z) ||
+        std::isnan(goal.x) || std::isnan(goal.y) || std::isnan(goal.z)) {
+        std::cout << "Invalid start or goal position (NaN detected)." << std::endl;
+        return std::vector<glm::vec3>();
+    }
+
+    int startX = static_cast<int>((start.x + GRID_SIZE / 2) / CELL_SIZE);
+    int startY = static_cast<int>((start.z + GRID_SIZE / 2) / CELL_SIZE);
+    int goalX = static_cast<int>((goal.x + GRID_SIZE / 2) / CELL_SIZE);
+    int goalY = static_cast<int>((goal.z + GRID_SIZE / 2) / CELL_SIZE);
+
+    std::cout << "Start position: " << glm::to_string(start) << ", Grid: (" << startX << ", " << startY << ")" << std::endl;
+    std::cout << "Goal position: " << glm::to_string(goal) << ", Grid: (" << goalX << ", " << goalY << ")" << std::endl;
+
+    auto compare = [](const GridNode* a, const GridNode* b) { return a->f > b->f; };
+    std::priority_queue<GridNode*, std::vector<GridNode*>, decltype(compare)> openSet(compare);
+    std::unordered_set<GridNode*> closedSet;
+    std::vector<std::vector<GridNode*>> gridNodes(GRID_SIZE, std::vector<GridNode*>(GRID_SIZE, nullptr));
+
+    GridNode* startNode = new GridNode(startX, startY);
+    startNode->h = heuristic(startX, startY, goalX, goalY);
+    startNode->f = startNode->h;
+    openSet.push(startNode);
+    gridNodes[startX][startY] = startNode;
+
+    while (!openSet.empty()) {
+        GridNode* current = openSet.top();
+        openSet.pop();
+
+        if (current->x == goalX && current->y == goalY) {
+            // Path found, reconstruct and return
+            std::vector<glm::vec3> path;
+            while (current != nullptr) {
+                path.push_back(glm::vec3(current->x * CELL_SIZE - GRID_SIZE / 2, 0, current->y * CELL_SIZE - GRID_SIZE / 2));
+                current = current->parent;
+            }
+            std::reverse(path.begin(), path.end());
+
+            // Clean up allocated memory
+            for (auto& row : gridNodes) {
+                for (auto node : row) {
+                    delete node;
+                }
+            }
+
+            return path;
+        }
+
+        closedSet.insert(current);
+
+        // Check neighbors
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dy = -1; dy <= 1; dy++) {
+                if (dx == 0 && dy == 0) continue;
+
+                int newX = current->x + dx;
+                int newY = current->y + dy;
+
+                if (!isValidCell(newX, newY)) continue;
+
+                GridNode* neighbor = gridNodes[newX][newY];
+                if (neighbor == nullptr) {
+                    neighbor = new GridNode(newX, newY);
+                    gridNodes[newX][newY] = neighbor;
+                }
+
+                if (closedSet.find(neighbor) != closedSet.end()) continue;
+
+                float tentativeG = current->g + 1; // Assume cost of 1 to move to adjacent cell
+
+                if (tentativeG < neighbor->g || neighbor->g == 0) {
+                    neighbor->parent = current;
+                    neighbor->g = tentativeG;
+                    neighbor->h = heuristic(newX, newY, goalX, goalY);
+                    neighbor->f = neighbor->g + neighbor->h;
+
+                    openSet.push(neighbor);
+                }
+            }
+        }
+    }
+
+    // Clean up allocated memory
+    for (auto& row : gridNodes) {
+        for (auto node : row) {
+            delete node;
+        }
+    }
+
+    // No path found
+    return std::vector<glm::vec3>();
+}
+
+void drawDebugLines() {
+    debugVertices.clear();
+
+    // Generate grid lines
+    for (int i = 0; i <= GRID_SIZE; i++) {
+        float pos = i * CELL_SIZE - GRID_SIZE / 2;
+
+        // Vertical lines
+        debugVertices.insert(debugVertices.end(), { pos, 0.01f, -GRID_SIZE / 2, 0.5f, 0.5f, 0.5f });
+        debugVertices.insert(debugVertices.end(), { pos, 0.01f, GRID_SIZE / 2, 0.5f, 0.5f, 0.5f });
+
+        // Horizontal lines
+        debugVertices.insert(debugVertices.end(), { -GRID_SIZE / 2, 0.01f, pos, 0.5f, 0.5f, 0.5f });
+        debugVertices.insert(debugVertices.end(), { GRID_SIZE / 2, 0.01f, pos, 0.5f, 0.5f, 0.5f });
+    }
+
+    // Generate path lines
+    if (!currentPath.empty()) {
+        for (size_t i = 0; i < currentPath.size() - 1; i++) {
+            debugVertices.insert(debugVertices.end(), { currentPath[i].x, 0.02f, currentPath[i].z, 1.0f, 0.0f, 0.0f });
+            debugVertices.insert(debugVertices.end(), { currentPath[i + 1].x, 0.02f, currentPath[i + 1].z, 1.0f, 0.0f, 0.0f });
+        }
+    }
+
+    // Update VBO data
+    glBindVertexArray(debugVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, debugVBO);
+    glBufferData(GL_ARRAY_BUFFER, debugVertices.size() * sizeof(float), debugVertices.data(), GL_DYNAMIC_DRAW);
+
+    // Set vertex attribute pointers
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
+    glEnableVertexAttribArray(1);
+
+    // Draw debug lines
+    glUseProgram(debugShaderProgram);
+    glUniformMatrix4fv(glGetUniformLocation(debugShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(viewMatrix));
+    glUniformMatrix4fv(glGetUniformLocation(debugShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projectionMatrix));
+
+    glBindVertexArray(debugVAO);
+    glDrawArrays(GL_LINES, 0, debugVertices.size() / 6);
+    glBindVertexArray(0);
+}
+
+void initDebugRendering() {
+    // Compile and link debug shader
+    unsigned int vertexShader = compileShader(GL_VERTEX_SHADER, debugVertexShaderSource);
+    unsigned int fragmentShader = compileShader(GL_FRAGMENT_SHADER, debugFragmentShaderSource);
+    debugShaderProgram = createShaderProgram(vertexShader, fragmentShader);
+    glDeleteShader(vertexShader);
+    glDeleteShader(fragmentShader);
+
+    // Generate VAO and VBO
+    glGenVertexArrays(1, &debugVAO);
+    glGenBuffers(1, &debugVBO);
 }
