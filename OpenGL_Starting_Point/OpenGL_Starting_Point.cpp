@@ -990,24 +990,24 @@ std::vector<glm::vec3> findPath(const glm::vec3& start, const glm::vec3& goal) {
 void drawDebugLines() {
     debugVertices.clear();
 
-    // Generate grid lines
+    // Generate grid lines (green)
     for (int i = 0; i <= GRID_SIZE; i++) {
-        float pos = i * CELL_SIZE - GRID_SIZE / 2;
+        float pos = i * CELL_SIZE - WORLD_SIZE / 2;
 
         // Vertical lines
-        debugVertices.insert(debugVertices.end(), { pos, 0.01f, -GRID_SIZE / 2, 0.5f, 0.5f, 0.5f });
-        debugVertices.insert(debugVertices.end(), { pos, 0.01f, GRID_SIZE / 2, 0.5f, 0.5f, 0.5f });
+        debugVertices.insert(debugVertices.end(), { pos, 0.01f, -WORLD_SIZE / 2, 0.0f, 1.0f, 0.0f }); // Green color
+        debugVertices.insert(debugVertices.end(), { pos, 0.01f, WORLD_SIZE / 2, 0.0f, 1.0f, 0.0f });
 
         // Horizontal lines
-        debugVertices.insert(debugVertices.end(), { -GRID_SIZE / 2, 0.01f, pos, 0.5f, 0.5f, 0.5f });
-        debugVertices.insert(debugVertices.end(), { GRID_SIZE / 2, 0.01f, pos, 0.5f, 0.5f, 0.5f });
+        debugVertices.insert(debugVertices.end(), { -WORLD_SIZE / 2, 0.01f, pos, 0.0f, 1.0f, 0.0f });
+        debugVertices.insert(debugVertices.end(), { WORLD_SIZE / 2, 0.01f, pos, 0.0f, 1.0f, 0.0f });
     }
 
-    // Generate path lines
+    // Generate path lines (yellow)
     if (!currentPath.empty()) {
         for (size_t i = 0; i < currentPath.size() - 1; i++) {
-            debugVertices.insert(debugVertices.end(), { currentPath[i].x, 0.02f, currentPath[i].z, 1.0f, 0.0f, 0.0f });
-            debugVertices.insert(debugVertices.end(), { currentPath[i + 1].x, 0.02f, currentPath[i + 1].z, 1.0f, 0.0f, 0.0f });
+            debugVertices.insert(debugVertices.end(), { currentPath[i].x, 0.02f, currentPath[i].z, 1.0f, 1.0f, 0.0f }); // Yellow color
+            debugVertices.insert(debugVertices.end(), { currentPath[i + 1].x, 0.02f, currentPath[i + 1].z, 1.0f, 1.0f, 0.0f });
         }
     }
 
