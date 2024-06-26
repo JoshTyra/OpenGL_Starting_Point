@@ -617,13 +617,23 @@ int main() {
     originalModelMatrix = glm::rotate(originalModelMatrix, glm::radians(90.0f), glm::vec3(-1.0f, 0.0f, 0.0f)); // Original rotation
     originalModelMatrix = glm::scale(originalModelMatrix, glm::vec3(0.025f)); // Original scaling
 
-    for (int i = 0; i < numInstances; i++) {
-        float x = (rand() % 100 - 50) / 10.0f;
-        float y = 0.0f;
-        float z = (rand() % 100 - 50) / 10.0f;
-        glm::mat4 translationMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(x, y, z));
-        instanceModels[i] = translationMatrix * originalModelMatrix; // Apply translation, then original transformations
-        instanceColors[i] = getRandomColor();
+    // Calculate safe spacing
+    int gridSide = static_cast<int>(std::sqrt(numInstances));
+    float spacing = WORLD_SIZE / gridSide;
+
+    for (int i = 0; i < gridSide; ++i) {
+        for (int j = 0; j < gridSide; ++j) {
+            int idx = i * gridSide + j;
+            if (idx >= numInstances) break;
+
+            float x = -WORLD_SIZE / 2 + spacing * i + spacing / 2;
+            float y = 0.0f;
+            float z = -WORLD_SIZE / 2 + spacing * j + spacing / 2;
+
+            glm::mat4 translationMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(x, y, z));
+            instanceModels[idx] = translationMatrix * originalModelMatrix; // Apply translation, then original transformations
+            instanceColors[idx] = getRandomColor();
+        }
     }
 
     // Create buffers for instanced data
