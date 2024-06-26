@@ -607,7 +607,7 @@ int main() {
     glm::mat4 currentRotationMatrix = glm::mat4(1.0f);
 
     // Number of instances
-    const int numInstances = 15;
+    const int numInstances = 100;
 
     // Model matrices for each instance
     std::vector<glm::mat4> instanceModels(numInstances);
@@ -693,8 +693,6 @@ int main() {
                 if (!currentPath.empty()) {
                     currentPathIndex = 0;
                     idleTimer = 0.0f;
-                    std::cout << "New path generated. Start: " << glm::to_string(characterPosition)
-                        << ", End: " << glm::to_string(currentDestination) << std::endl;
                     animationStateMachine.process_event(StartWandering());
                 }
                 else {
@@ -759,8 +757,6 @@ int main() {
                 idleTimer = 0.0f;
             }
         }
-
-        std::cout << "Character position: " << glm::to_string(characterPosition) << std::endl;
 
         // Update animations with the current blend factor
         animationTime = glfwGetTime(); // Use the actual elapsed time for animation
@@ -946,7 +942,6 @@ float heuristic(int x1, int y1, int x2, int y2) {
 
 std::vector<glm::vec3> findPath(const glm::vec3& start, const glm::vec3& goal) {
     if (glm::distance(start, goal) < 0.1f) {
-        std::cout << "Start and goal positions are the same. No path needed." << std::endl;
         return std::vector<glm::vec3>();
     }
 
@@ -960,9 +955,6 @@ std::vector<glm::vec3> findPath(const glm::vec3& start, const glm::vec3& goal) {
     int startY = static_cast<int>((start.z + GRID_SIZE / 2) / CELL_SIZE);
     int goalX = static_cast<int>((goal.x + GRID_SIZE / 2) / CELL_SIZE);
     int goalY = static_cast<int>((goal.z + GRID_SIZE / 2) / CELL_SIZE);
-
-    std::cout << "Start position: " << glm::to_string(start) << ", Grid: (" << startX << ", " << startY << ")" << std::endl;
-    std::cout << "Goal position: " << glm::to_string(goal) << ", Grid: (" << goalX << ", " << goalY << ")" << std::endl;
 
     auto compare = [](const GridNode* a, const GridNode* b) { return a->f > b->f; };
     std::priority_queue<GridNode*, std::vector<GridNode*>, decltype(compare)> openSet(compare);
