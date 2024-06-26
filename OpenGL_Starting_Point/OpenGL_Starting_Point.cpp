@@ -208,14 +208,18 @@ const char* characterVertexShaderSource = R"(
     layout(location = 5) in ivec4 aBoneIDs;
     layout(location = 6) in vec4 aWeights;
 
+    // Instanced data
+    layout(location = 7) in mat4 instanceModel;
+    layout(location = 11) in vec3 instanceColor;
+
     out vec2 TexCoord;
     out vec3 FragPos;
     out vec3 TangentLightDir;
     out vec3 TangentViewPos;
     out vec3 TangentFragPos;
     out vec3 ReflectDir;
+    out vec3 InstanceColor;
 
-    uniform mat4 model;
     uniform mat4 view;
     uniform mat4 projection;
     uniform mat4 boneTransforms[40];
@@ -231,12 +235,12 @@ const char* characterVertexShaderSource = R"(
 
         vec3 transformedPos = vec3(boneTransform * vec4(aPos, 1.0));
 
-        vec4 worldPos = model * vec4(transformedPos, 1.0);
+        vec4 worldPos = instanceModel * vec4(transformedPos, 1.0);
         gl_Position = projection * view * worldPos;
 
         FragPos = vec3(worldPos);
-
         TexCoord = aTexCoord;
+        InstanceColor = instanceColor;
 
         // Transform the normal, tangent, and bitangent vectors using the bone transformations
         mat3 boneTransformIT = transpose(inverse(mat3(boneTransform)));
@@ -244,7 +248,7 @@ const char* characterVertexShaderSource = R"(
         vec3 transformedTangent = normalize(boneTransformIT * aTangent);
         vec3 transformedBitangent = normalize(boneTransformIT * aBitangent);
 
-        mat3 normalMatrix = transpose(inverse(mat3(model)));
+        mat3 normalMatrix = transpose(inverse(mat3(instanceModel)));
         vec3 T = normalize(normalMatrix * transformedTangent);
         vec3 N = normalize(normalMatrix * transformedNormal);
         T = normalize(T - dot(T, N) * N);
@@ -270,6 +274,7 @@ const char* characterFragmentShaderSource = R"(
     in vec3 TangentViewPos;
     in vec3 TangentFragPos;
     in vec3 ReflectDir;
+    in vec3 InstanceColor;
 
     uniform vec3 ambientColor;
     uniform vec3 diffuseColor;
@@ -281,20 +286,19 @@ const char* characterFragmentShaderSource = R"(
     uniform sampler2D texture_mask;
     uniform samplerCube cubemap;
     uniform float lightIntensity;
-    uniform vec3 changeColor;
 
     void main() {
         vec3 normal = texture(texture_normal, TexCoord).rgb;
         normal = normal * 2.0f - 1.0f;
         normal.y = -normal.y;
-        normal = normalize(normal);  // Apply bump strength
+        normal = normalize(normal);
 
         vec4 diffuseTexture = texture(texture_diffuse, TexCoord);
         vec3 diffuseTexColor = diffuseTexture.rgb;
         float alphaValue = diffuseTexture.a;
 
         vec3 maskValue = texture(texture_mask, TexCoord).rgb;
-        vec3 blendedColor = mix(diffuseTexColor, diffuseTexColor * changeColor, maskValue);
+        vec3 blendedColor = mix(diffuseTexColor, diffuseTexColor * InstanceColor, maskValue);
 
         float specularMask = diffuseTexture.a;
 
@@ -322,7 +326,7 @@ const char* characterFragmentShaderSource = R"(
         reflectedColor *= specularMask;
         color = mix(color, reflectedColor, 0.35f);
 
-        FragColor = vec4(color, 1.0f);
+        FragColor = vec4(color, alphaValue);
     }
 )";
 
@@ -602,6 +606,58 @@ int main() {
     const float blendSpeed = 5.0f; // Increase this value to make transitions faster
     glm::mat4 currentRotationMatrix = glm::mat4(1.0f);
 
+    // Number of instances
+    const int numInstances = 15;
+
+    // Model matrices for each instance
+    std::vector<glm::mat4> instanceModels(numInstances);
+    std::vector<glm::vec3> instanceColors(numInstances);
+
+    glm::mat4 originalModelMatrix = glm::mat4(1.0f);
+    originalModelMatrix = glm::rotate(originalModelMatrix, glm::radians(90.0f), glm::vec3(-1.0f, 0.0f, 0.0f)); // Original rotation
+    originalModelMatrix = glm::scale(originalModelMatrix, glm::vec3(0.025f)); // Original scaling
+
+    for (int i = 0; i < numInstances; i++) {
+        float x = (rand() % 100 - 50) / 10.0f;
+        float y = 0.0f;
+        float z = (rand() % 100 - 50) / 10.0f;
+        glm::mat4 translationMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(x, y, z));
+        instanceModels[i] = translationMatrix * originalModelMatrix; // Apply translation, then original transformations
+        instanceColors[i] = getRandomColor();
+    }
+
+    // Create buffers for instanced data
+    unsigned int instanceVBO, colorVBO;
+    glGenBuffers(1, &instanceVBO);
+    glBindBuffer(GL_ARRAY_BUFFER, instanceVBO);
+    glBufferData(GL_ARRAY_BUFFER, numInstances * sizeof(glm::mat4), &instanceModels[0], GL_STATIC_DRAW);
+
+    // Ensure the correct buffer is bound before setting the vertex attribute pointers
+    glGenBuffers(1, &colorVBO);
+    glBindBuffer(GL_ARRAY_BUFFER, colorVBO);
+    glBufferData(GL_ARRAY_BUFFER, numInstances * sizeof(glm::vec3), &instanceColors[0], GL_STATIC_DRAW);
+
+    for (unsigned int i = 0; i < loadedMeshes.size(); i++) {
+        unsigned int VAO = loadedMeshes[i].VAO;
+        glBindVertexArray(VAO);
+
+        glBindBuffer(GL_ARRAY_BUFFER, instanceVBO);
+
+        // Set instance model matrix attributes
+        for (unsigned int j = 0; j < 4; j++) {
+            glEnableVertexAttribArray(7 + j);
+            glVertexAttribPointer(7 + j, 4, GL_FLOAT, GL_FALSE, sizeof(glm::mat4), (void*)(sizeof(glm::vec4) * j));
+            glVertexAttribDivisor(7 + j, 1);
+        }
+
+        glBindBuffer(GL_ARRAY_BUFFER, colorVBO);
+        glEnableVertexAttribArray(11);
+        glVertexAttribPointer(11, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), (void*)0);
+        glVertexAttribDivisor(11, 1);
+
+        glBindVertexArray(0);
+    }
+
     // Main render loop
     while (!glfwWindowShouldClose(window)) {
         float currentFrame = static_cast<float>(glfwGetTime());
@@ -779,7 +835,7 @@ int main() {
             }
 
             glBindVertexArray(mesh.VAO);
-            glDrawElements(GL_TRIANGLES, mesh.indices.size(), GL_UNSIGNED_INT, 0);
+            glDrawElementsInstanced(GL_TRIANGLES, mesh.indices.size(), GL_UNSIGNED_INT, 0, numInstances); // Draw instanced
         }
 
         // Render the plane
