@@ -362,7 +362,7 @@ const char* characterFragmentShaderSource = R"(
 
         vec3 reflectedColor = texture(cubemap, ReflectDir).rgb;
         reflectedColor *= specularMask;
-        color = mix(color, reflectedColor, 0.4f);
+        color = mix(color, reflectedColor, 0.35f);
 
         FragColor = vec4(color, alphaValue);
     }
@@ -643,8 +643,8 @@ int main() {
     const float IDLE_DURATION = 15.0f; // 15 seconds of idle time at destination
     const float PATH_COMPLETION_CHECK_THRESHOLD = 0.1f; // Distance threshold to consider a path point reached
     float idleTimer = 0.0f;
-    const glm::vec3 idleColor = hexToRGB("#758550");  // Multiplayer Blue
-    const glm::vec3 runningColor = hexToRGB("#6493ED");  // Multiplayer Red
+    const glm::vec3 idleColor = hexToRGB("#208A20");  // Multiplayer Blue
+    const glm::vec3 runningColor = hexToRGB("#208A20");  // Multiplayer Red
 
     // Define a blend speed multiplier
     const float blendSpeed = 5.0f; // Increase this value to make transitions faster
@@ -784,64 +784,64 @@ int main() {
             float animationDuration = npc.endFrame - npc.startFrame;
             npc.animationTime = npc.startFrame + fmod(npc.animationTime - npc.startFrame, animationDuration);
 
-            //// Update animation state based on the state machine
-            //if (npc.stateMachine->state_cast<const Idle*>() != nullptr) {
-            //    npc.currentAnimationIndex = 0; // Idle animation
-            //    npc.blendFactor = glm::max(0.0f, npc.blendFactor - blendSpeed * deltaTime);
-            //    npc.idleTimer += deltaTime;
-            //    if (npc.idleTimer >= IDLE_DURATION) {
-            //        float randX = std::clamp(std::uniform_real_distribution<float>(-GRID_SIZE / 2, GRID_SIZE / 2)(gen),
-            //            -GRID_SIZE / 2.0f + 1.0f, GRID_SIZE / 2.0f - 1.0f);
-            //        float randZ = std::clamp(std::uniform_real_distribution<float>(-GRID_SIZE / 2, GRID_SIZE / 2)(gen),
-            //            -GRID_SIZE / 2.0f + 1.0f, GRID_SIZE / 2.0f - 1.0f);
-            //        npc.currentDestination = glm::vec3(randX, 0.0f, randZ);
-            //        npc.currentPath = findPath(npc.position, npc.currentDestination);
-            //        if (!npc.currentPath.empty()) {
-            //            npc.currentPathIndex = 0;
-            //            npc.idleTimer = 0.0f;
-            //            npc.stateMachine->process_event(StartWandering());
-            //        }
-            //        else {
-            //            npc.idleTimer = IDLE_DURATION; // Try again next frame
-            //        }
-            //    }
-            //}
-            //else if (npc.stateMachine->state_cast<const Wandering*>() != nullptr) {
-            //    npc.currentAnimationIndex = 1; // Use running animation for wandering
-            //    npc.blendFactor = glm::min(1.0f, npc.blendFactor + blendSpeed * deltaTime);
-            //    if (!npc.currentPath.empty() && npc.currentPathIndex < npc.currentPath.size()) {
-            //        glm::vec3 targetPosition = npc.currentPath[npc.currentPathIndex];
-            //        glm::vec3 direction = targetPosition - npc.position;
+            // Update animation state based on the state machine
+            if (npc.stateMachine->state_cast<const Idle*>() != nullptr) {
+                npc.currentAnimationIndex = 0; // Idle animation
+                npc.blendFactor = glm::max(0.0f, npc.blendFactor - blendSpeed * deltaTime);
+                npc.idleTimer += deltaTime;
+                if (npc.idleTimer >= IDLE_DURATION) {
+                    float randX = std::clamp(std::uniform_real_distribution<float>(-GRID_SIZE / 2, GRID_SIZE / 2)(gen),
+                        -GRID_SIZE / 2.0f + 1.0f, GRID_SIZE / 2.0f - 1.0f);
+                    float randZ = std::clamp(std::uniform_real_distribution<float>(-GRID_SIZE / 2, GRID_SIZE / 2)(gen),
+                        -GRID_SIZE / 2.0f + 1.0f, GRID_SIZE / 2.0f - 1.0f);
+                    npc.currentDestination = glm::vec3(randX, 0.0f, randZ);
+                    npc.currentPath = findPath(npc.position, npc.currentDestination);
+                    if (!npc.currentPath.empty()) {
+                        npc.currentPathIndex = 0;
+                        npc.idleTimer = 0.0f;
+                        npc.stateMachine->process_event(StartWandering());
+                    }
+                    else {
+                        npc.idleTimer = IDLE_DURATION; // Try again next frame
+                    }
+                }
+            }
+            else if (npc.stateMachine->state_cast<const Wandering*>() != nullptr) {
+                npc.currentAnimationIndex = 1; // Use running animation for wandering
+                npc.blendFactor = glm::min(1.0f, npc.blendFactor + blendSpeed * deltaTime);
+                if (!npc.currentPath.empty() && npc.currentPathIndex < npc.currentPath.size()) {
+                    glm::vec3 targetPosition = npc.currentPath[npc.currentPathIndex];
+                    glm::vec3 direction = targetPosition - npc.position;
 
-            //        if (!npc.currentPath.empty() && npc.currentPathIndex < npc.currentPath.size()) {
-            //            glm::vec3 targetPosition = npc.currentPath[npc.currentPathIndex];
-            //            glm::vec3 direction = targetPosition - npc.position;
-            //            if (glm::length(direction) > PATH_COMPLETION_CHECK_THRESHOLD) {
-            //                direction = glm::normalize(direction);
-            //                float targetRotation = std::atan2(-direction.z, direction.x);
-            //                float newRotation = lerpAngle(npc.currentRotationAngle, targetRotation, rotationSpeed * deltaTime);
-            //                npc.currentRotationMatrix = glm::rotate(glm::mat4(1.0f), newRotation, glm::vec3(0.0f, 1.0f, 0.0f));
-            //                npc.currentRotationAngle = newRotation;
-            //                glm::vec3 movement = direction * movementSpeed * deltaTime;
-            //                npc.position += movement;
+                    if (!npc.currentPath.empty() && npc.currentPathIndex < npc.currentPath.size()) {
+                        glm::vec3 targetPosition = npc.currentPath[npc.currentPathIndex];
+                        glm::vec3 direction = targetPosition - npc.position;
+                        if (glm::length(direction) > PATH_COMPLETION_CHECK_THRESHOLD) {
+                            direction = glm::normalize(direction);
+                            float targetRotation = std::atan2(-direction.z, direction.x);
+                            float newRotation = lerpAngle(npc.currentRotationAngle, targetRotation, rotationSpeed * deltaTime);
+                            npc.currentRotationMatrix = glm::rotate(glm::mat4(1.0f), newRotation, glm::vec3(0.0f, 1.0f, 0.0f));
+                            npc.currentRotationAngle = newRotation;
+                            glm::vec3 movement = direction * movementSpeed * deltaTime;
+                            npc.position += movement;
 
-            //                // Clamp NPC position to world boundaries
-            //                npc.position = glm::clamp(npc.position,
-            //                    glm::vec3(-WORLD_SIZE / 2.0f + 1.0f, 0.0f, -WORLD_SIZE / 2.0f + 1.0f),
-            //                    glm::vec3(WORLD_SIZE / 2.0f - 1.0f, 0.0f, WORLD_SIZE / 2.0f - 1.0f));
-            //            }
-            //            else {
-            //                npc.currentPathIndex++;
-            //            }
-            //        }
-            //    }
-            //    if (npc.currentPathIndex >= npc.currentPath.size()) {
-            //        npc.stateMachine->process_event(PathComplete());
-            //        npc.currentPath.clear();
-            //        npc.currentPathIndex = 0;
-            //        npc.idleTimer = 0.0f;
-            //    }
-            //}
+                            // Clamp NPC position to world boundaries
+                            npc.position = glm::clamp(npc.position,
+                                glm::vec3(-WORLD_SIZE / 2.0f + 1.0f, 0.0f, -WORLD_SIZE / 2.0f + 1.0f),
+                                glm::vec3(WORLD_SIZE / 2.0f - 1.0f, 0.0f, WORLD_SIZE / 2.0f - 1.0f));
+                        }
+                        else {
+                            npc.currentPathIndex++;
+                        }
+                    }
+                }
+                if (npc.currentPathIndex >= npc.currentPath.size()) {
+                    npc.stateMachine->process_event(PathComplete());
+                    npc.currentPath.clear();
+                    npc.currentPathIndex = 0;
+                    npc.idleTimer = 0.0f;
+                }
+            }
 
             // Update model matrix
             npc.modelMatrix = glm::translate(glm::mat4(1.0f), npc.position) *
@@ -896,8 +896,8 @@ int main() {
         glm::vec3 viewPos = camera.getPosition();
         glm::vec3 ambientColor = glm::vec3(0.45f, 0.45f, 0.45f);
         glm::vec3 diffuseColor = glm::vec3(1.0f, 1.0f, 1.0f);
-        glm::vec3 specularColor = glm::vec3(0.6f, 0.6f, 0.6f);
-        float shininess = 16.0f;
+        glm::vec3 specularColor = glm::vec3(0.65f, 0.65f, 0.65f);
+        float shininess = 32.0f;
         float lightIntensity = 1.25f;
 
         glUniform3fv(glGetUniformLocation(characterShaderProgram, "lightDir"), 1, glm::value_ptr(lightDir));
