@@ -71,6 +71,8 @@ public:
     void processAnimations();
     void updateHeadRotation(float deltaTime, std::vector<std::string> animationNames, int currentAnimationIndex);
 
+    void setBoneTransformsSSBO(GLuint ssbo); // New method to set the SSBO
+
 private:
     void processNode(aiNode* node, const aiScene* scene);
     void processMesh(aiMesh* mesh, const aiScene* scene, const aiMatrix4x4& nodeTransformation);
@@ -105,6 +107,8 @@ private:
     float headRotationDuration;
     bool headRotationInProgress;
     std::vector<glm::vec2> headPoses;
+
+    GLuint boneTransformsSSBO; // SSBO for bone transforms
 };
 
 #endif // MODELLOADER_H

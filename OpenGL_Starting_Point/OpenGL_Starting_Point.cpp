@@ -31,6 +31,8 @@ float lastY = HEIGHT / 2.0f;
 bool firstMouse = true;
 float deltaTime = 0.0f; // Time between current frame and last frame
 float lastFrame = 0.0f; // Time of last frame
+double previousTime = 0.0;
+int frameCount = 0;
 
 Camera camera(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), -180.0f, 0.0f, 6.0f, 0.1f, 45.0f);
 ModelLoader modelLoader;
@@ -84,6 +86,7 @@ struct NPC {
 };
 
 std::vector<NPC> npcs;
+GLuint boneTransformsSSBO;
 
 // Plane geometry shit
 unsigned int planeVAO, planeVBO;
@@ -129,6 +132,7 @@ float heuristic(int x1, int y1, int x2, int y2);
 std::vector<glm::vec3> findPath(const glm::vec3& start, const glm::vec3& goal);
 void drawDebugLines();
 void initDebugRendering();
+void initSSBO();
 
 unsigned int loadCubemap(std::vector<std::string> faces) {
     unsigned int textureID;
@@ -223,6 +227,7 @@ unsigned int loadTexture(const char* path) {
 
 const char* characterVertexShaderSource = R"(
     #version 430 core
+
     layout(location = 0) in vec3 aPos;
     layout(location = 1) in vec2 aTexCoord;
     layout(location = 2) in vec3 aNormal;
@@ -247,12 +252,16 @@ const char* characterVertexShaderSource = R"(
 
     uniform mat4 view;
     uniform mat4 projection;
-    uniform mat4 idleBoneTransforms[40];
-    uniform mat4 runBoneTransforms[40];
     uniform vec3 lightDir;
     uniform vec3 viewPos;
 
-    mat4 calculateBoneTransform(mat4 boneTransforms[40], ivec4 boneIDs, vec4 weights) {
+    // SSBO declaration
+    layout(std430, binding = 0) buffer BoneTransforms {
+        mat4 boneTransforms[];
+    };
+
+    // Function to calculate the final bone transform
+    mat4 calculateBoneTransform(ivec4 boneIDs, vec4 weights) {
         mat4 boneTransform = mat4(0.0);
         for (int i = 0; i < 4; ++i) {
             if (weights[i] > 0.0) {
@@ -267,12 +276,8 @@ const char* characterVertexShaderSource = R"(
         float animationDuration = instanceEndFrame - instanceStartFrame;
         float localAnimationTime = instanceStartFrame + mod(instanceAnimationTime - instanceStartFrame, animationDuration);
 
-        // Calculate bone transformations for both idle and run animations
-        mat4 idleBoneTransform = calculateBoneTransform(idleBoneTransforms, aBoneIDs, aWeights);
-        mat4 runBoneTransform = calculateBoneTransform(runBoneTransforms, aBoneIDs, aWeights);
-
-        // Choose the appropriate bone transform based on the animation range
-        mat4 finalBoneTransform = (instanceStartFrame < 59.0) ? idleBoneTransform : runBoneTransform;
+        // Calculate bone transformation
+        mat4 finalBoneTransform = calculateBoneTransform(aBoneIDs, aWeights);
 
         // Apply bone transformation to vertex position
         vec3 transformedPos = vec3(finalBoneTransform * vec4(aPos, 1.0));
@@ -286,7 +291,7 @@ const char* characterVertexShaderSource = R"(
         InstanceColor = instanceColor;
 
         // Transform normal, tangent, and bitangent
-        mat3 normalMatrix = transpose(inverse(mat3(instanceModel * finalBoneTransform)));
+        mat3 normalMatrix = transpose(inverse(mat3(instanceModel) * mat3(finalBoneTransform)));
         vec3 N = normalize(normalMatrix * aNormal);
         vec3 T = normalize(normalMatrix * aTangent);
         T = normalize(T - dot(T, N) * N); // Ensure T is orthogonal to N
@@ -329,6 +334,7 @@ const char* characterFragmentShaderSource = R"(
         vec3 normal = texture(texture_normal, TexCoord).rgb;
         normal = normal * 2.0f - 1.0f;
         normal.y = -normal.y;
+        normal.xy *= 1.5f;
         normal = normalize(normal);
 
         vec4 diffuseTexture = texture(texture_diffuse, TexCoord);
@@ -470,7 +476,6 @@ std::vector<std::string> colorCodes = {
     "#EB7EC5", // Multiplayer Pink
     "#D2D2D2", // Multiplayer White
     "#758550", // Campaign Color Lighter
-    "#000000", // Halo ce multiplayer black
     "#707E71", // Halo ce multiplayer gray
     "#01FFFF", // Halo ce multiplayer cyan
     "#6493ED", // Halo ce multiplayer cobalt
@@ -572,6 +577,12 @@ int main() {
     // Define the viewport dimensions
     glViewport(0, 0, WIDTH, HEIGHT);
 
+    // Initialize SSBO
+    initSSBO();
+
+    // Set the SSBO in the ModelLoader
+    modelLoader.setBoneTransformsSSBO(boneTransformsSSBO);
+
     glEnable(GL_DEPTH_TEST);
 
     initDebugRendering();
@@ -643,22 +654,14 @@ int main() {
     const float IDLE_DURATION = 15.0f; // 15 seconds of idle time at destination
     const float PATH_COMPLETION_CHECK_THRESHOLD = 0.1f; // Distance threshold to consider a path point reached
     float idleTimer = 0.0f;
-    const glm::vec3 idleColor = hexToRGB("#208A20");  // Multiplayer Blue
-    const glm::vec3 runningColor = hexToRGB("#208A20");  // Multiplayer Red
 
     // Define a blend speed multiplier
     const float blendSpeed = 5.0f; // Increase this value to make transitions faster
     glm::mat4 currentRotationMatrix = glm::mat4(1.0f);
 
-    // Initialize NPC instances
-    const int numInstances = 100;
+    const int numInstances = 64;
 
     std::vector<NPC> npcs(numInstances);
-    for (auto& npc : npcs) {
-        npc.animationTime = 0.0f;
-        npc.startFrame = 0.0f; // Start of run animation
-        npc.endFrame = 58.0f;   // End of run animation
-    }
 
     // Create buffers for instance data
     std::vector<glm::mat4> instanceModels(numInstances);
@@ -766,6 +769,21 @@ int main() {
         deltaTime = currentFrame - lastFrame;
         lastFrame = currentFrame;
 
+        double currentTime = glfwGetTime();
+        double elapsedTime = currentTime - previousTime;
+        frameCount++;
+
+        // Update FPS every second
+        if (elapsedTime >= 1.0) {
+            double fps = frameCount / elapsedTime;
+            std::string title = "OpenGL Basic Application - FPS: " + std::to_string(fps);
+            glfwSetWindowTitle(window, title.c_str());
+
+            // Reset for the next second
+            frameCount = 0;
+            previousTime = currentTime;
+        }
+
         processInput(window);
 
         if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
@@ -777,6 +795,7 @@ int main() {
         projectionMatrix = camera.getProjectionMatrix(static_cast<float>(WIDTH) / static_cast<float>(HEIGHT));
         viewMatrix = camera.getViewMatrix();
 
+        // Update animations and bone transforms for each NPC
         for (auto& npc : npcs) {
             npc.animationTime += deltaTime;
 
@@ -813,26 +832,22 @@ int main() {
                     glm::vec3 targetPosition = npc.currentPath[npc.currentPathIndex];
                     glm::vec3 direction = targetPosition - npc.position;
 
-                    if (!npc.currentPath.empty() && npc.currentPathIndex < npc.currentPath.size()) {
-                        glm::vec3 targetPosition = npc.currentPath[npc.currentPathIndex];
-                        glm::vec3 direction = targetPosition - npc.position;
-                        if (glm::length(direction) > PATH_COMPLETION_CHECK_THRESHOLD) {
-                            direction = glm::normalize(direction);
-                            float targetRotation = std::atan2(-direction.z, direction.x);
-                            float newRotation = lerpAngle(npc.currentRotationAngle, targetRotation, rotationSpeed * deltaTime);
-                            npc.currentRotationMatrix = glm::rotate(glm::mat4(1.0f), newRotation, glm::vec3(0.0f, 1.0f, 0.0f));
-                            npc.currentRotationAngle = newRotation;
-                            glm::vec3 movement = direction * movementSpeed * deltaTime;
-                            npc.position += movement;
+                    if (glm::length(direction) > PATH_COMPLETION_CHECK_THRESHOLD) {
+                        direction = glm::normalize(direction);
+                        float targetRotation = std::atan2(-direction.z, direction.x);
+                        float newRotation = lerpAngle(npc.currentRotationAngle, targetRotation, rotationSpeed * deltaTime);
+                        npc.currentRotationMatrix = glm::rotate(glm::mat4(1.0f), newRotation, glm::vec3(0.0f, 1.0f, 0.0f));
+                        npc.currentRotationAngle = newRotation;
+                        glm::vec3 movement = direction * movementSpeed * deltaTime;
+                        npc.position += movement;
 
-                            // Clamp NPC position to world boundaries
-                            npc.position = glm::clamp(npc.position,
-                                glm::vec3(-WORLD_SIZE / 2.0f + 1.0f, 0.0f, -WORLD_SIZE / 2.0f + 1.0f),
-                                glm::vec3(WORLD_SIZE / 2.0f - 1.0f, 0.0f, WORLD_SIZE / 2.0f - 1.0f));
-                        }
-                        else {
-                            npc.currentPathIndex++;
-                        }
+                        // Clamp NPC position to world boundaries
+                        npc.position = glm::clamp(npc.position,
+                            glm::vec3(-WORLD_SIZE / 2.0f + 1.0f, 0.0f, -WORLD_SIZE / 2.0f + 1.0f),
+                            glm::vec3(WORLD_SIZE / 2.0f - 1.0f, 0.0f, WORLD_SIZE / 2.0f - 1.0f));
+                    }
+                    else {
+                        npc.currentPathIndex++;
                     }
                 }
                 if (npc.currentPathIndex >= npc.currentPath.size()) {
@@ -856,10 +871,10 @@ int main() {
 
             // Set color based on animation state
             if (npcs[i].startFrame < 59.0f) {
-                instanceColors[i] = idleColor;  // Blue for idle
+                instanceColors[i] = currentArmorColor;  // Blue for idle
             }
             else {
-                instanceColors[i] = runningColor;  // Red for running
+                instanceColors[i] = currentArmorColor;  // Red for running
             }
 
             instanceAnimationTimes[i] = npcs[i].animationTime;
@@ -868,11 +883,11 @@ int main() {
         }
 
         glBindBuffer(GL_ARRAY_BUFFER, instanceVBO);
-        glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(glm::mat4) * numInstances, instanceModels.data());
-        glBufferSubData(GL_ARRAY_BUFFER, sizeof(glm::mat4) * numInstances, sizeof(glm::vec3) * numInstances, instanceColors.data());
-        glBufferSubData(GL_ARRAY_BUFFER, sizeof(glm::mat4) * numInstances + sizeof(glm::vec3) * numInstances, sizeof(float) * numInstances, instanceAnimationTimes.data());
-        glBufferSubData(GL_ARRAY_BUFFER, sizeof(glm::mat4) * numInstances + sizeof(glm::vec3) * numInstances + sizeof(float) * numInstances, sizeof(float) * numInstances, instanceStartFrames.data());
-        glBufferSubData(GL_ARRAY_BUFFER, sizeof(glm::mat4) * numInstances + sizeof(glm::vec3) * numInstances + sizeof(float) * numInstances * 2, sizeof(float) * numInstances, instanceEndFrames.data());
+        glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(glm::mat4)* numInstances, instanceModels.data());
+        glBufferSubData(GL_ARRAY_BUFFER, sizeof(glm::mat4)* numInstances, sizeof(glm::vec3)* numInstances, instanceColors.data());
+        glBufferSubData(GL_ARRAY_BUFFER, sizeof(glm::mat4)* numInstances + sizeof(glm::vec3) * numInstances, sizeof(float)* numInstances, instanceAnimationTimes.data());
+        glBufferSubData(GL_ARRAY_BUFFER, sizeof(glm::mat4)* numInstances + sizeof(glm::vec3) * numInstances + sizeof(float) * numInstances, sizeof(float)* numInstances, instanceStartFrames.data());
+        glBufferSubData(GL_ARRAY_BUFFER, sizeof(glm::mat4)* numInstances + sizeof(glm::vec3) * numInstances + sizeof(float) * numInstances * 2, sizeof(float)* numInstances, instanceEndFrames.data());
         glBindBuffer(GL_ARRAY_BUFFER, 0);
 
         // Update bone transforms for idle animation
@@ -896,8 +911,8 @@ int main() {
         glm::vec3 viewPos = camera.getPosition();
         glm::vec3 ambientColor = glm::vec3(0.45f, 0.45f, 0.45f);
         glm::vec3 diffuseColor = glm::vec3(1.0f, 1.0f, 1.0f);
-        glm::vec3 specularColor = glm::vec3(0.65f, 0.65f, 0.65f);
-        float shininess = 32.0f;
+        glm::vec3 specularColor = glm::vec3(0.6f, 0.6f, 0.6f);
+        float shininess = 16.0f;
         float lightIntensity = 1.25f;
 
         glUniform3fv(glGetUniformLocation(characterShaderProgram, "lightDir"), 1, glm::value_ptr(lightDir));
@@ -908,14 +923,6 @@ int main() {
         glUniform1f(glGetUniformLocation(characterShaderProgram, "shininess"), shininess);
         glUniform1f(glGetUniformLocation(characterShaderProgram, "lightIntensity"), lightIntensity);
         glUniform3fv(glGetUniformLocation(characterShaderProgram, "changeColor"), 1, glm::value_ptr(currentArmorColor));
-
-        // Set both sets of bone transforms in the shader
-        for (unsigned int i = 0; i < idleBoneTransforms.size(); ++i) {
-            std::string idleUniformName = "idleBoneTransforms[" + std::to_string(i) + "]";
-            std::string runUniformName = "runBoneTransforms[" + std::to_string(i) + "]";
-            glUniformMatrix4fv(glGetUniformLocation(characterShaderProgram, idleUniformName.c_str()), 1, GL_FALSE, glm::value_ptr(idleBoneTransforms[i]));
-            glUniformMatrix4fv(glGetUniformLocation(characterShaderProgram, runUniformName.c_str()), 1, GL_FALSE, glm::value_ptr(runBoneTransforms[i]));
-        }
 
         // Set up textures and draw the character
         glActiveTexture(GL_TEXTURE0);
@@ -981,6 +988,7 @@ int main() {
     glDeleteVertexArrays(1, &debugVAO);
     glDeleteBuffers(1, &debugVBO);
     glDeleteProgram(debugShaderProgram);
+    glDeleteBuffers(1, &boneTransformsSSBO);
 
     glfwTerminate();
     return 0;
@@ -1215,4 +1223,18 @@ void initDebugRendering() {
     // Generate VAO and VBO
     glGenVertexArrays(1, &debugVAO);
     glGenBuffers(1, &debugVBO);
+}
+
+void initSSBO() {
+    glGenBuffers(1, &boneTransformsSSBO);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, boneTransformsSSBO);
+
+    // Allocate initial space for the SSBO (this can be resized later if needed)
+    glBufferData(GL_SHADER_STORAGE_BUFFER, 40 * sizeof(glm::mat4), nullptr, GL_DYNAMIC_DRAW);
+
+    // Bind the SSBO to a binding point (0 in this case)
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, boneTransformsSSBO);
+
+    // Unbind the SSBO
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 }
