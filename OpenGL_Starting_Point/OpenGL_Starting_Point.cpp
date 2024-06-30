@@ -76,8 +76,11 @@ struct NPC {
     glm::mat4 currentRotationMatrix;
     float blendFactor;
     int currentAnimationIndex;
+    float animationTime;
+    float startFrame;
+    float endFrame;
 
-    NPC() : stateMachine(std::make_unique<AnimationStateMachine>()) {}
+    NPC() : stateMachine(std::make_unique<AnimationStateMachine>()), animationTime(0.0f), startFrame(0.0f), endFrame(1.0f) {}
 };
 
 std::vector<NPC> npcs;
@@ -162,9 +165,11 @@ unsigned int compileShader(unsigned int type, const char* source) {
     int success;
     glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
     if (!success) {
-        char infoLog[512];
-        glGetShaderInfoLog(shader, 512, nullptr, infoLog);
-        std::cerr << "ERROR::SHADER::COMPILATION_FAILED\n" << infoLog << std::endl;
+        int infoLogLength;
+        glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &infoLogLength);
+        std::vector<char> infoLog(infoLogLength);
+        glGetShaderInfoLog(shader, infoLogLength, nullptr, infoLog.data());
+        std::cerr << "ERROR::SHADER::COMPILATION_FAILED of type: " << (type == GL_VERTEX_SHADER ? "VERTEX" : "FRAGMENT") << "\n" << infoLog.data() << std::endl;
     }
     return shader;
 }
@@ -178,9 +183,11 @@ unsigned int createShaderProgram(unsigned int vertexShader, unsigned int fragmen
     int success;
     glGetProgramiv(program, GL_LINK_STATUS, &success);
     if (!success) {
-        char infoLog[512];
-        glGetProgramInfoLog(program, 512, nullptr, infoLog);
-        std::cerr << "ERROR::PROGRAM::LINKING_FAILED\n" << infoLog << std::endl;
+        int infoLogLength;
+        glGetProgramiv(program, GL_INFO_LOG_LENGTH, &infoLogLength);
+        std::vector<char> infoLog(infoLogLength);
+        glGetProgramInfoLog(program, infoLogLength, nullptr, infoLog.data());
+        std::cerr << "ERROR::PROGRAM::LINKING_FAILED\n" << infoLog.data() << std::endl;
     }
     return program;
 }
@@ -216,7 +223,6 @@ unsigned int loadTexture(const char* path) {
 
 const char* characterVertexShaderSource = R"(
     #version 430 core
-
     layout(location = 0) in vec3 aPos;
     layout(location = 1) in vec2 aTexCoord;
     layout(location = 2) in vec3 aNormal;
@@ -224,10 +230,12 @@ const char* characterVertexShaderSource = R"(
     layout(location = 4) in vec3 aBitangent;
     layout(location = 5) in ivec4 aBoneIDs;
     layout(location = 6) in vec4 aWeights;
-
     // Instanced data
     layout(location = 7) in mat4 instanceModel;
     layout(location = 11) in vec3 instanceColor;
+    layout(location = 12) in float instanceAnimationTime;
+    layout(location = 13) in float instanceStartFrame;
+    layout(location = 14) in float instanceEndFrame;
 
     out vec2 TexCoord;
     out vec3 FragPos;
@@ -239,19 +247,37 @@ const char* characterVertexShaderSource = R"(
 
     uniform mat4 view;
     uniform mat4 projection;
-    uniform mat4 boneTransforms[40];
-
+    uniform mat4 idleBoneTransforms[40];
+    uniform mat4 runBoneTransforms[40];
     uniform vec3 lightDir;
     uniform vec3 viewPos;
 
+    mat4 calculateBoneTransform(mat4 boneTransforms[40], ivec4 boneIDs, vec4 weights) {
+        mat4 boneTransform = mat4(0.0);
+        for (int i = 0; i < 4; ++i) {
+            if (weights[i] > 0.0) {
+                boneTransform += boneTransforms[boneIDs[i]] * weights[i];
+            }
+        }
+        return boneTransform;
+    }
+
     void main() {
-        mat4 boneTransform = boneTransforms[aBoneIDs[0]] * aWeights[0];
-        boneTransform += boneTransforms[aBoneIDs[1]] * aWeights[1];
-        boneTransform += boneTransforms[aBoneIDs[2]] * aWeights[2];
-        boneTransform += boneTransforms[aBoneIDs[3]] * aWeights[3];
+        // Compute the animation time within the specified frame range
+        float animationDuration = instanceEndFrame - instanceStartFrame;
+        float localAnimationTime = instanceStartFrame + mod(instanceAnimationTime - instanceStartFrame, animationDuration);
 
-        vec3 transformedPos = vec3(boneTransform * vec4(aPos, 1.0));
+        // Calculate bone transformations for both idle and run animations
+        mat4 idleBoneTransform = calculateBoneTransform(idleBoneTransforms, aBoneIDs, aWeights);
+        mat4 runBoneTransform = calculateBoneTransform(runBoneTransforms, aBoneIDs, aWeights);
 
+        // Choose the appropriate bone transform based on the animation range
+        mat4 finalBoneTransform = (instanceStartFrame < 59.0) ? idleBoneTransform : runBoneTransform;
+
+        // Apply bone transformation to vertex position
+        vec3 transformedPos = vec3(finalBoneTransform * vec4(aPos, 1.0));
+
+        // Apply instance model matrix
         vec4 worldPos = instanceModel * vec4(transformedPos, 1.0);
         gl_Position = projection * view * worldPos;
 
@@ -259,27 +285,22 @@ const char* characterVertexShaderSource = R"(
         TexCoord = aTexCoord;
         InstanceColor = instanceColor;
 
-        // Transform the normal, tangent, and bitangent vectors using the bone transformations
-        mat3 boneTransformIT = transpose(inverse(mat3(boneTransform)));
-        vec3 transformedNormal = normalize(boneTransformIT * aNormal);
-        vec3 transformedTangent = normalize(boneTransformIT * aTangent);
-        vec3 transformedBitangent = normalize(boneTransformIT * aBitangent);
-
-        mat3 normalMatrix = transpose(inverse(mat3(instanceModel)));
-        vec3 T = normalize(normalMatrix * transformedTangent);
-        vec3 N = normalize(normalMatrix * transformedNormal);
-        T = normalize(T - dot(T, N) * N);
-        vec3 B = cross(N, T);
+        // Transform normal, tangent, and bitangent
+        mat3 normalMatrix = transpose(inverse(mat3(instanceModel * finalBoneTransform)));
+        vec3 N = normalize(normalMatrix * aNormal);
+        vec3 T = normalize(normalMatrix * aTangent);
+        T = normalize(T - dot(T, N) * N); // Ensure T is orthogonal to N
+        vec3 B = normalize(cross(N, T));
 
         mat3 TBN = transpose(mat3(T, B, N));
         TangentLightDir = TBN * lightDir;
         TangentViewPos = TBN * viewPos;
         TangentFragPos = TBN * FragPos;
 
-        vec3 I = normalize(viewPos - FragPos);
-        ReflectDir = reflect(I, N);
+        vec3 viewDir = normalize(viewPos - FragPos);
+        ReflectDir = reflect(-viewDir, N);
     }
-    )";
+)";
 
 const char* characterFragmentShaderSource = R"(
     #version 430 core
@@ -341,7 +362,7 @@ const char* characterFragmentShaderSource = R"(
 
         vec3 reflectedColor = texture(cubemap, ReflectDir).rgb;
         reflectedColor *= specularMask;
-        color = mix(color, reflectedColor, 0.35f);
+        color = mix(color, reflectedColor, 0.4f);
 
         FragColor = vec4(color, alphaValue);
     }
@@ -407,21 +428,28 @@ const char* debugFragmentShaderSource = R"(
 
 void initShaders() {
     // Compile and link character shader
-    unsigned int characterVertexShader = glCreateShader(GL_VERTEX_SHADER);
-    glShaderSource(characterVertexShader, 1, &characterVertexShaderSource, NULL);
-    glCompileShader(characterVertexShader);
-
-    unsigned int characterFragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
-    glShaderSource(characterFragmentShader, 1, &characterFragmentShaderSource, NULL);
-    glCompileShader(characterFragmentShader);
-
-    characterShaderProgram = glCreateProgram();
-    glAttachShader(characterShaderProgram, characterVertexShader);
-    glAttachShader(characterShaderProgram, characterFragmentShader);
-    glLinkProgram(characterShaderProgram);
+    unsigned int characterVertexShader = compileShader(GL_VERTEX_SHADER, characterVertexShaderSource);
+    unsigned int characterFragmentShader = compileShader(GL_FRAGMENT_SHADER, characterFragmentShaderSource);
+    characterShaderProgram = createShaderProgram(characterVertexShader, characterFragmentShader);
 
     glDeleteShader(characterVertexShader);
     glDeleteShader(characterFragmentShader);
+
+    // Compile and link plane shader
+    unsigned int planeVertexShader = compileShader(GL_VERTEX_SHADER, planeVertexShaderSource);
+    unsigned int planeFragmentShader = compileShader(GL_FRAGMENT_SHADER, planeFragmentShaderSource);
+    planeShaderProgram = createShaderProgram(planeVertexShader, planeFragmentShader);
+
+    glDeleteShader(planeVertexShader);
+    glDeleteShader(planeFragmentShader);
+
+    // Compile and link debug shader
+    unsigned int debugVertexShader = compileShader(GL_VERTEX_SHADER, debugVertexShaderSource);
+    unsigned int debugFragmentShader = compileShader(GL_FRAGMENT_SHADER, debugFragmentShaderSource);
+    debugShaderProgram = createShaderProgram(debugVertexShader, debugFragmentShader);
+
+    glDeleteShader(debugVertexShader);
+    glDeleteShader(debugFragmentShader);
 }
 
 glm::vec3 hexToRGB(const std::string& hex) {
@@ -615,18 +643,29 @@ int main() {
     const float IDLE_DURATION = 15.0f; // 15 seconds of idle time at destination
     const float PATH_COMPLETION_CHECK_THRESHOLD = 0.1f; // Distance threshold to consider a path point reached
     float idleTimer = 0.0f;
+    const glm::vec3 idleColor = hexToRGB("#758550");  // Multiplayer Blue
+    const glm::vec3 runningColor = hexToRGB("#6493ED");  // Multiplayer Red
 
     // Define a blend speed multiplier
     const float blendSpeed = 5.0f; // Increase this value to make transitions faster
     glm::mat4 currentRotationMatrix = glm::mat4(1.0f);
 
-    // Number of instances
+    // Initialize NPC instances
     const int numInstances = 100;
 
-    npcs.reserve(numInstances);
-    for (int i = 0; i < numInstances; ++i) {
-        npcs.emplace_back();
+    std::vector<NPC> npcs(numInstances);
+    for (auto& npc : npcs) {
+        npc.animationTime = 0.0f;
+        npc.startFrame = 0.0f; // Start of run animation
+        npc.endFrame = 58.0f;   // End of run animation
     }
+
+    // Create buffers for instance data
+    std::vector<glm::mat4> instanceModels(numInstances);
+    std::vector<glm::vec3> instanceColors(numInstances);
+    std::vector<float> instanceAnimationTimes(numInstances);
+    std::vector<float> instanceStartFrames(numInstances);
+    std::vector<float> instanceEndFrames(numInstances);
 
     glm::mat4 originalModelMatrix = glm::mat4(1.0f);
     originalModelMatrix = glm::rotate(originalModelMatrix, glm::radians(90.0f), glm::vec3(-1.0f, 0.0f, 0.0f)); // Original rotation
@@ -655,31 +694,40 @@ int main() {
             npcs[idx].currentRotationMatrix = glm::mat4(1.0f);
             npcs[idx].blendFactor = 0.0f;
             npcs[idx].currentAnimationIndex = 0;
+
+            // Assign different animation ranges to even and odd indexed NPCs
+            if (idx % 2 == 0) {
+                npcs[idx].startFrame = 0.0f;   // Idle animation start
+                npcs[idx].endFrame = 58.0f;    // Idle animation end
+            }
+            else {
+                npcs[idx].startFrame = 59.0f;  // Run animation start
+                npcs[idx].endFrame = 78.0f;    // Run animation end
+            }
         }
     }
 
-    // Add these declarations before creating the buffers
-    std::vector<glm::mat4> instanceModels(numInstances);
-    std::vector<glm::vec3> instanceColors(numInstances);
-
-    // Then fill them with initial data
     for (size_t i = 0; i < npcs.size(); ++i) {
         instanceModels[i] = npcs[i].modelMatrix;
         instanceColors[i] = npcs[i].color;
+        instanceAnimationTimes[i] = npcs[i].animationTime;
+        instanceStartFrames[i] = npcs[i].startFrame;
+        instanceEndFrames[i] = npcs[i].endFrame;
     }
 
-    // Now create your buffers
-    unsigned int instanceVBO, colorVBO;
+    unsigned int instanceVBO;
     glGenBuffers(1, &instanceVBO);
     glBindBuffer(GL_ARRAY_BUFFER, instanceVBO);
-    glBufferData(GL_ARRAY_BUFFER, numInstances * sizeof(glm::mat4), instanceModels.data(), GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(glm::mat4) * numInstances + sizeof(glm::vec3) * numInstances + sizeof(float) * numInstances * 3, nullptr, GL_STATIC_DRAW);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(glm::mat4) * numInstances, instanceModels.data());
+    glBufferSubData(GL_ARRAY_BUFFER, sizeof(glm::mat4) * numInstances, sizeof(glm::vec3) * numInstances, instanceColors.data());
+    glBufferSubData(GL_ARRAY_BUFFER, sizeof(glm::mat4) * numInstances + sizeof(glm::vec3) * numInstances, sizeof(float) * numInstances, instanceAnimationTimes.data());
+    glBufferSubData(GL_ARRAY_BUFFER, sizeof(glm::mat4) * numInstances + sizeof(glm::vec3) * numInstances + sizeof(float) * numInstances, sizeof(float) * numInstances, instanceStartFrames.data());
+    glBufferSubData(GL_ARRAY_BUFFER, sizeof(glm::mat4) * numInstances + sizeof(glm::vec3) * numInstances + sizeof(float) * numInstances * 2, sizeof(float) * numInstances, instanceEndFrames.data());
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
 
-    glGenBuffers(1, &colorVBO);
-    glBindBuffer(GL_ARRAY_BUFFER, colorVBO);
-    glBufferData(GL_ARRAY_BUFFER, numInstances * sizeof(glm::vec3), instanceColors.data(), GL_STATIC_DRAW);
-
-    for (unsigned int i = 0; i < loadedMeshes.size(); i++) {
-        unsigned int VAO = loadedMeshes[i].VAO;
+    for (const auto& mesh : loadedMeshes) {
+        unsigned int VAO = mesh.VAO;
         glBindVertexArray(VAO);
 
         glBindBuffer(GL_ARRAY_BUFFER, instanceVBO);
@@ -691,10 +739,23 @@ int main() {
             glVertexAttribDivisor(7 + j, 1);
         }
 
-        glBindBuffer(GL_ARRAY_BUFFER, colorVBO);
+        // Set instance color attribute
         glEnableVertexAttribArray(11);
-        glVertexAttribPointer(11, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), (void*)0);
+        glVertexAttribPointer(11, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), (void*)(sizeof(glm::mat4) * numInstances));
         glVertexAttribDivisor(11, 1);
+
+        // Set instance animation attributes
+        glEnableVertexAttribArray(12);
+        glVertexAttribPointer(12, 1, GL_FLOAT, GL_FALSE, sizeof(float), (void*)(sizeof(glm::mat4) * numInstances + sizeof(glm::vec3) * numInstances));
+        glVertexAttribDivisor(12, 1);
+
+        glEnableVertexAttribArray(13);
+        glVertexAttribPointer(13, 1, GL_FLOAT, GL_FALSE, sizeof(float), (void*)(sizeof(glm::mat4) * numInstances + sizeof(glm::vec3) * numInstances + sizeof(float) * numInstances));
+        glVertexAttribDivisor(13, 1);
+
+        glEnableVertexAttribArray(14);
+        glVertexAttribPointer(14, 1, GL_FLOAT, GL_FALSE, sizeof(float), (void*)(sizeof(glm::mat4) * numInstances + sizeof(glm::vec3) * numInstances + sizeof(float) * numInstances * 2));
+        glVertexAttribDivisor(14, 1);
 
         glBindVertexArray(0);
     }
@@ -717,57 +778,71 @@ int main() {
         viewMatrix = camera.getViewMatrix();
 
         for (auto& npc : npcs) {
-            // Update animation state based on the state machine
-            if (npc.stateMachine->state_cast<const Idle*>() != nullptr) {
-                npc.currentAnimationIndex = 0; // Idle animation
-                npc.blendFactor = glm::max(0.0f, npc.blendFactor - blendSpeed * deltaTime);
-                npc.idleTimer += deltaTime;
-                if (npc.idleTimer >= IDLE_DURATION) {
-                    float randX = std::clamp(std::uniform_real_distribution<float>(-GRID_SIZE / 2, GRID_SIZE / 2)(gen),
-                        -GRID_SIZE / 2.0f + 1.0f, GRID_SIZE / 2.0f - 1.0f);
-                    float randZ = std::clamp(std::uniform_real_distribution<float>(-GRID_SIZE / 2, GRID_SIZE / 2)(gen),
-                        -GRID_SIZE / 2.0f + 1.0f, GRID_SIZE / 2.0f - 1.0f);
-                    npc.currentDestination = glm::vec3(randX, 0.0f, randZ);
-                    npc.currentPath = findPath(npc.position, npc.currentDestination);
-                    if (!npc.currentPath.empty()) {
-                        npc.currentPathIndex = 0;
-                        npc.idleTimer = 0.0f;
-                        npc.stateMachine->process_event(StartWandering());
-                    }
-                    else {
-                        npc.idleTimer = IDLE_DURATION; // Try again next frame
-                    }
-                }
-            }
-            else if (npc.stateMachine->state_cast<const Wandering*>() != nullptr) {
-                npc.currentAnimationIndex = 1; // Use running animation for wandering
-                npc.blendFactor = glm::min(1.0f, npc.blendFactor + blendSpeed * deltaTime);
-                if (!npc.currentPath.empty() && npc.currentPathIndex < npc.currentPath.size()) {
-                    glm::vec3 targetPosition = npc.currentPath[npc.currentPathIndex];
-                    glm::vec3 direction = targetPosition - npc.position;
-                    if (glm::length(direction) > PATH_COMPLETION_CHECK_THRESHOLD) {
-                        direction = glm::normalize(direction);
-                        float targetRotation = std::atan2(-direction.z, direction.x);
-                        float newRotation = lerpAngle(npc.currentRotationAngle, targetRotation, rotationSpeed * deltaTime);
-                        npc.currentRotationMatrix = glm::rotate(glm::mat4(1.0f), newRotation, glm::vec3(0.0f, 1.0f, 0.0f));
-                        npc.currentRotationAngle = newRotation;
-                        glm::vec3 movement = direction * movementSpeed * deltaTime;
-                        npc.position += movement;
-                        npc.position = glm::clamp(npc.position,
-                            glm::vec3(-GRID_SIZE / 2.0f + 1.0f, 0.0f, -GRID_SIZE / 2.0f + 1.0f),
-                            glm::vec3(GRID_SIZE / 2.0f - 1.0f, 0.0f, GRID_SIZE / 2.0f - 1.0f));
-                    }
-                    else {
-                        npc.currentPathIndex++;
-                    }
-                }
-                if (npc.currentPathIndex >= npc.currentPath.size()) {
-                    npc.stateMachine->process_event(PathComplete());
-                    npc.currentPath.clear();
-                    npc.currentPathIndex = 0;
-                    npc.idleTimer = 0.0f;
-                }
-            }
+            npc.animationTime += deltaTime;
+
+            // Ensure the animation loops within its assigned range
+            float animationDuration = npc.endFrame - npc.startFrame;
+            npc.animationTime = npc.startFrame + fmod(npc.animationTime - npc.startFrame, animationDuration);
+
+            //// Update animation state based on the state machine
+            //if (npc.stateMachine->state_cast<const Idle*>() != nullptr) {
+            //    npc.currentAnimationIndex = 0; // Idle animation
+            //    npc.blendFactor = glm::max(0.0f, npc.blendFactor - blendSpeed * deltaTime);
+            //    npc.idleTimer += deltaTime;
+            //    if (npc.idleTimer >= IDLE_DURATION) {
+            //        float randX = std::clamp(std::uniform_real_distribution<float>(-GRID_SIZE / 2, GRID_SIZE / 2)(gen),
+            //            -GRID_SIZE / 2.0f + 1.0f, GRID_SIZE / 2.0f - 1.0f);
+            //        float randZ = std::clamp(std::uniform_real_distribution<float>(-GRID_SIZE / 2, GRID_SIZE / 2)(gen),
+            //            -GRID_SIZE / 2.0f + 1.0f, GRID_SIZE / 2.0f - 1.0f);
+            //        npc.currentDestination = glm::vec3(randX, 0.0f, randZ);
+            //        npc.currentPath = findPath(npc.position, npc.currentDestination);
+            //        if (!npc.currentPath.empty()) {
+            //            npc.currentPathIndex = 0;
+            //            npc.idleTimer = 0.0f;
+            //            npc.stateMachine->process_event(StartWandering());
+            //        }
+            //        else {
+            //            npc.idleTimer = IDLE_DURATION; // Try again next frame
+            //        }
+            //    }
+            //}
+            //else if (npc.stateMachine->state_cast<const Wandering*>() != nullptr) {
+            //    npc.currentAnimationIndex = 1; // Use running animation for wandering
+            //    npc.blendFactor = glm::min(1.0f, npc.blendFactor + blendSpeed * deltaTime);
+            //    if (!npc.currentPath.empty() && npc.currentPathIndex < npc.currentPath.size()) {
+            //        glm::vec3 targetPosition = npc.currentPath[npc.currentPathIndex];
+            //        glm::vec3 direction = targetPosition - npc.position;
+
+            //        if (!npc.currentPath.empty() && npc.currentPathIndex < npc.currentPath.size()) {
+            //            glm::vec3 targetPosition = npc.currentPath[npc.currentPathIndex];
+            //            glm::vec3 direction = targetPosition - npc.position;
+            //            if (glm::length(direction) > PATH_COMPLETION_CHECK_THRESHOLD) {
+            //                direction = glm::normalize(direction);
+            //                float targetRotation = std::atan2(-direction.z, direction.x);
+            //                float newRotation = lerpAngle(npc.currentRotationAngle, targetRotation, rotationSpeed * deltaTime);
+            //                npc.currentRotationMatrix = glm::rotate(glm::mat4(1.0f), newRotation, glm::vec3(0.0f, 1.0f, 0.0f));
+            //                npc.currentRotationAngle = newRotation;
+            //                glm::vec3 movement = direction * movementSpeed * deltaTime;
+            //                npc.position += movement;
+
+            //                // Clamp NPC position to world boundaries
+            //                npc.position = glm::clamp(npc.position,
+            //                    glm::vec3(-WORLD_SIZE / 2.0f + 1.0f, 0.0f, -WORLD_SIZE / 2.0f + 1.0f),
+            //                    glm::vec3(WORLD_SIZE / 2.0f - 1.0f, 0.0f, WORLD_SIZE / 2.0f - 1.0f));
+            //            }
+            //            else {
+            //                npc.currentPathIndex++;
+            //            }
+            //        }
+            //    }
+            //    if (npc.currentPathIndex >= npc.currentPath.size()) {
+            //        npc.stateMachine->process_event(PathComplete());
+            //        npc.currentPath.clear();
+            //        npc.currentPathIndex = 0;
+            //        npc.idleTimer = 0.0f;
+            //    }
+            //}
+
             // Update model matrix
             npc.modelMatrix = glm::translate(glm::mat4(1.0f), npc.position) *
                 npc.currentRotationMatrix *
@@ -775,26 +850,44 @@ int main() {
                 glm::scale(glm::mat4(1.0f), glm::vec3(0.025f));
         }
 
-        // Update animations with the current blend factor
-        animationTime = glfwGetTime(); // Use the actual elapsed time for animation
-        modelLoader.updateBoneTransforms(animationTime, animationNames, npcs[0].blendFactor);
-        modelLoader.updateHeadRotation(deltaTime, animationNames, npcs[0].currentAnimationIndex);
-
-        // Render the character
-        glUseProgram(characterShaderProgram);
-
-        // Insert the code snippet here
-        std::vector<glm::mat4> instanceModels(numInstances);
-        std::vector<glm::vec3> instanceColors(numInstances);
+        // Update instance data for GPU
         for (size_t i = 0; i < npcs.size(); ++i) {
             instanceModels[i] = npcs[i].modelMatrix;
-            instanceColors[i] = npcs[i].color;
-        }
-        glBindBuffer(GL_ARRAY_BUFFER, instanceVBO);
-        glBufferSubData(GL_ARRAY_BUFFER, 0, numInstances * sizeof(glm::mat4), instanceModels.data());
-        glBindBuffer(GL_ARRAY_BUFFER, colorVBO);
-        glBufferSubData(GL_ARRAY_BUFFER, 0, numInstances * sizeof(glm::vec3), instanceColors.data());
 
+            // Set color based on animation state
+            if (npcs[i].startFrame < 59.0f) {
+                instanceColors[i] = idleColor;  // Blue for idle
+            }
+            else {
+                instanceColors[i] = runningColor;  // Red for running
+            }
+
+            instanceAnimationTimes[i] = npcs[i].animationTime;
+            instanceStartFrames[i] = npcs[i].startFrame;
+            instanceEndFrames[i] = npcs[i].endFrame;
+        }
+
+        glBindBuffer(GL_ARRAY_BUFFER, instanceVBO);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(glm::mat4) * numInstances, instanceModels.data());
+        glBufferSubData(GL_ARRAY_BUFFER, sizeof(glm::mat4) * numInstances, sizeof(glm::vec3) * numInstances, instanceColors.data());
+        glBufferSubData(GL_ARRAY_BUFFER, sizeof(glm::mat4) * numInstances + sizeof(glm::vec3) * numInstances, sizeof(float) * numInstances, instanceAnimationTimes.data());
+        glBufferSubData(GL_ARRAY_BUFFER, sizeof(glm::mat4) * numInstances + sizeof(glm::vec3) * numInstances + sizeof(float) * numInstances, sizeof(float) * numInstances, instanceStartFrames.data());
+        glBufferSubData(GL_ARRAY_BUFFER, sizeof(glm::mat4) * numInstances + sizeof(glm::vec3) * numInstances + sizeof(float) * numInstances * 2, sizeof(float) * numInstances, instanceEndFrames.data());
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+        // Update bone transforms for idle animation
+        modelLoader.updateBoneTransforms(currentFrame, { "combat_sword_idle" }, 0.0f, 0.0f, 58.0f);
+        std::vector<glm::mat4> idleBoneTransforms = modelLoader.getBoneTransforms();
+
+        // Update bone transforms for run animation
+        modelLoader.updateBoneTransforms(currentFrame, { "combat_sword_move_front" }, 0.0f, 59.0f, 78.0f);
+        std::vector<glm::mat4> runBoneTransforms = modelLoader.getBoneTransforms();
+
+        // Get updated bone transforms
+        std::vector<glm::mat4> boneTransforms = modelLoader.getBoneTransforms();
+
+        // Render character instances
+        glUseProgram(characterShaderProgram);
         glUniformMatrix4fv(glGetUniformLocation(characterShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(viewMatrix));
         glUniformMatrix4fv(glGetUniformLocation(characterShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projectionMatrix));
 
@@ -816,10 +909,12 @@ int main() {
         glUniform1f(glGetUniformLocation(characterShaderProgram, "lightIntensity"), lightIntensity);
         glUniform3fv(glGetUniformLocation(characterShaderProgram, "changeColor"), 1, glm::value_ptr(currentArmorColor));
 
-        // Pass the bone transformations to the vertex shader
-        for (unsigned int i = 0; i < modelLoader.getBoneTransforms().size(); i++) {
-            std::string uniformName = "boneTransforms[" + std::to_string(i) + "]";
-            glUniformMatrix4fv(glGetUniformLocation(characterShaderProgram, uniformName.c_str()), 1, GL_FALSE, glm::value_ptr(modelLoader.getBoneTransforms()[i]));
+        // Set both sets of bone transforms in the shader
+        for (unsigned int i = 0; i < idleBoneTransforms.size(); ++i) {
+            std::string idleUniformName = "idleBoneTransforms[" + std::to_string(i) + "]";
+            std::string runUniformName = "runBoneTransforms[" + std::to_string(i) + "]";
+            glUniformMatrix4fv(glGetUniformLocation(characterShaderProgram, idleUniformName.c_str()), 1, GL_FALSE, glm::value_ptr(idleBoneTransforms[i]));
+            glUniformMatrix4fv(glGetUniformLocation(characterShaderProgram, runUniformName.c_str()), 1, GL_FALSE, glm::value_ptr(runBoneTransforms[i]));
         }
 
         // Set up textures and draw the character
@@ -950,7 +1045,6 @@ void initPlaneShaders() {
 // Function to check if a cell is valid and walkable
 bool isValidCell(int x, int y) {
     if (x < 0 || x >= GRID_SIZE || y < 0 || y >= GRID_SIZE) {
-        std::cout << "Cell out of bounds: (" << x << ", " << y << ")" << std::endl;
         return false;
     }
     return navigationGrid[x][y];
@@ -972,11 +1066,18 @@ std::vector<glm::vec3> findPath(const glm::vec3& start, const glm::vec3& goal) {
         return std::vector<glm::vec3>();
     }
 
-    int startX = static_cast<int>((start.x + GRID_SIZE / 2) / CELL_SIZE);
-    int startY = static_cast<int>((start.z + GRID_SIZE / 2) / CELL_SIZE);
-    int goalX = static_cast<int>((goal.x + GRID_SIZE / 2) / CELL_SIZE);
-    int goalY = static_cast<int>((goal.z + GRID_SIZE / 2) / CELL_SIZE);
+    int startX = static_cast<int>((start.x + WORLD_SIZE / 2) / CELL_SIZE);
+    int startY = static_cast<int>((start.z + WORLD_SIZE / 2) / CELL_SIZE);
+    int goalX = static_cast<int>((goal.x + WORLD_SIZE / 2) / CELL_SIZE);
+    int goalY = static_cast<int>((goal.z + WORLD_SIZE / 2) / CELL_SIZE);
 
+    // Clamp start and goal positions to grid boundaries
+    startX = std::clamp(startX, 0, GRID_SIZE - 1);
+    startY = std::clamp(startY, 0, GRID_SIZE - 1);
+    goalX = std::clamp(goalX, 0, GRID_SIZE - 1);
+    goalY = std::clamp(goalY, 0, GRID_SIZE - 1);
+
+    // Rest of the function remains the same
     auto compare = [](const GridNode* a, const GridNode* b) { return a->f > b->f; };
     std::priority_queue<GridNode*, std::vector<GridNode*>, decltype(compare)> openSet(compare);
     std::unordered_set<GridNode*> closedSet;

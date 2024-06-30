@@ -53,7 +53,7 @@ void ModelLoader::loadModel(const std::string& path) {
     loadedModelAABB = computeAABB(aggregatedVertices);
 }
 
-void ModelLoader::updateBoneTransforms(float timeInSeconds, std::vector<std::string> animationNames, float blendFactor) {
+void ModelLoader::updateBoneTransforms(float timeInSeconds, std::vector<std::string> animationNames, float blendFactor, float startFrame, float endFrame) {
     if (!scene || animationNames.empty()) {
         boneTransforms.resize(boneInfo.size(), glm::mat4(1.0f));
         return;
@@ -70,11 +70,11 @@ void ModelLoader::updateBoneTransforms(float timeInSeconds, std::vector<std::str
         auto it = animations.find(animationName);
         if (it != animations.end()) {
             const Animation& animation = it->second;
-            float timeInTicks = timeInSeconds * animation.ticksPerSecond;
-            float animationTime = fmod(timeInTicks, animation.endTime - animation.startTime) + animation.startTime;
+            float animationDuration = endFrame - startFrame;
+            float localAnimationTime = startFrame + fmod(timeInSeconds * animation.ticksPerSecond, animationDuration);
 
             std::vector<glm::mat4> currentBoneTransforms(boneInfo.size(), glm::mat4(1.0f));
-            readNodeHierarchy(animationTime, scene->mRootNode, identity, animationName);
+            readNodeHierarchy(localAnimationTime, scene->mRootNode, identity, animationName, startFrame, endFrame);
 
             for (size_t j = 0; j < boneInfo.size(); ++j) {
                 currentBoneTransforms[j] = boneInfo[j].FinalTransformation;
@@ -236,23 +236,32 @@ void ModelLoader::storeMesh(const std::vector<Vertex>& vertices, const std::vect
     loadedMeshes.push_back(mesh);
 }
 
-void ModelLoader::readNodeHierarchy(float animationTime, const aiNode* node, const glm::mat4& parentTransform, const std::string& animationName) {
+void ModelLoader::readNodeHierarchy(float animationTime, const aiNode* node, const glm::mat4& parentTransform, const std::string& animationName, float startFrame, float endFrame) {
     std::string nodeName(node->mName.data);
     glm::mat4 nodeTransformation = glm::transpose(glm::make_mat4(&node->mTransformation.a1));
     const aiNodeAnim* nodeAnim = findNodeAnim(animations[animationName], nodeName);
+
     if (nodeAnim) {
+        // Ensure animationTime is within the correct range
+        animationTime = glm::clamp(animationTime, startFrame, endFrame);
+
         aiVector3D scaling;
         calcInterpolatedScaling(scaling, animationTime, nodeAnim);
         glm::mat4 scalingM = glm::scale(glm::mat4(1.0f), glm::vec3(scaling.x, scaling.y, scaling.z));
+
         aiQuaternion rotationQ;
         calcInterpolatedRotation(rotationQ, animationTime, nodeAnim);
         glm::mat4 rotationM = glm::mat4_cast(glm::quat(rotationQ.w, rotationQ.x, rotationQ.y, rotationQ.z));
+
         aiVector3D translation;
         calcInterpolatedPosition(translation, animationTime, nodeAnim);
         glm::mat4 translationM = glm::translate(glm::mat4(1.0f), glm::vec3(translation.x, translation.y, translation.z));
+
         nodeTransformation = translationM * rotationM * scalingM;
     }
+
     glm::mat4 globalTransformation = parentTransform * nodeTransformation;
+
     if (boneMapping.find(nodeName) != boneMapping.end()) {
         int boneIndex = boneMapping[nodeName];
         if (nodeName == "head") {
@@ -262,8 +271,9 @@ void ModelLoader::readNodeHierarchy(float animationTime, const aiNode* node, con
         }
         boneInfo[boneIndex].FinalTransformation = globalTransformation * boneInfo[boneIndex].BoneOffset;
     }
+
     for (unsigned int i = 0; i < node->mNumChildren; i++) {
-        readNodeHierarchy(animationTime, node->mChildren[i], globalTransformation, animationName);
+        readNodeHierarchy(animationTime, node->mChildren[i], globalTransformation, animationName, startFrame, endFrame);
     }
 }
 
@@ -402,8 +412,6 @@ void ModelLoader::processAnimations() {
     for (unsigned int i = 0; i < scene->mNumAnimations; ++i) {
         const aiAnimation* aiAnim = scene->mAnimations[i];
 
-        // Example: Assuming two test animations, first from 0-58 and second from 59-116
-        // You can adjust these ranges based on your actual keyframes
         Animation anim1(aiAnim->mName.C_Str(), aiAnim->mDuration,
             aiAnim->mTicksPerSecond != 0 ? aiAnim->mTicksPerSecond : 25.0,
             0, 58, 1.0f);
