@@ -334,7 +334,6 @@ const char* characterFragmentShaderSource = R"(
         vec3 normal = texture(texture_normal, TexCoord).rgb;
         normal = normal * 2.0f - 1.0f;
         normal.y = -normal.y;
-        normal.xy *= 1.5f;
         normal = normalize(normal);
 
         vec4 diffuseTexture = texture(texture_diffuse, TexCoord);
