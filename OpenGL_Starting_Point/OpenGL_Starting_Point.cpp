@@ -86,7 +86,6 @@ struct NPC {
 };
 
 std::vector<NPC> npcs;
-GLuint boneTransformsSSBO;
 
 // Plane geometry shit
 unsigned int planeVAO, planeVBO;
@@ -132,7 +131,7 @@ float heuristic(int x1, int y1, int x2, int y2);
 std::vector<glm::vec3> findPath(const glm::vec3& start, const glm::vec3& goal);
 void drawDebugLines();
 void initDebugRendering();
-void initSSBO();
+void initTBO();
 
 unsigned int loadCubemap(std::vector<std::string> faces) {
     unsigned int textureID;
@@ -226,7 +225,7 @@ unsigned int loadTexture(const char* path) {
 }
 
 const char* characterVertexShaderSource = R"(
-    #version 430 core
+   #version 430 core
 
     layout(location = 0) in vec3 aPos;
     layout(location = 1) in vec2 aTexCoord;
@@ -255,17 +254,22 @@ const char* characterVertexShaderSource = R"(
     uniform vec3 lightDir;
     uniform vec3 viewPos;
 
-    // SSBO declaration
-    layout(std430, binding = 0) buffer BoneTransforms {
-        mat4 boneTransforms[];
-    };
+    // TBO declaration
+    uniform samplerBuffer boneTransformsTBO;
 
     // Function to calculate the final bone transform
     mat4 calculateBoneTransform(ivec4 boneIDs, vec4 weights) {
         mat4 boneTransform = mat4(0.0);
         for (int i = 0; i < 4; ++i) {
             if (weights[i] > 0.0) {
-                boneTransform += boneTransforms[boneIDs[i]] * weights[i];
+                int index = boneIDs[i] * 4;
+                mat4 boneMatrix = mat4(
+                    texelFetch(boneTransformsTBO, index), 
+                    texelFetch(boneTransformsTBO, index + 1), 
+                    texelFetch(boneTransformsTBO, index + 2), 
+                    texelFetch(boneTransformsTBO, index + 3)
+                );
+                boneTransform += boneMatrix * weights[i];
             }
         }
         return boneTransform;
@@ -576,11 +580,8 @@ int main() {
     // Define the viewport dimensions
     glViewport(0, 0, WIDTH, HEIGHT);
 
-    // Initialize SSBO
-    initSSBO();
-
-    // Set the SSBO in the ModelLoader
-    modelLoader.setBoneTransformsSSBO(boneTransformsSSBO);
+    // Initialize TBO
+    initTBO();
 
     glEnable(GL_DEPTH_TEST);
 
@@ -689,7 +690,29 @@ int main() {
             npcs[idx].position = glm::vec3(x, y, z);
             npcs[idx].modelMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(x, y, z)) * originalModelMatrix;
             npcs[idx].color = getRandomColor();
-            npcs[idx].stateMachine->initiate();
+
+            try {
+                //std::cout << "[DEBUG] Creating AnimationStateMachine for NPC " << idx << std::endl;
+                npcs[idx].stateMachine = std::make_unique<AnimationStateMachine>();
+                //std::cout << "[DEBUG] Created AnimationStateMachine for NPC " << idx << ", address: " << npcs[idx].stateMachine.get() << std::endl;
+
+                if (npcs[idx].stateMachine) {
+                    npcs[idx].stateMachine->setAnimationFrames(0.0f, 58.0f);
+                    //std::cout << "[DEBUG] About to initiate AnimationStateMachine for NPC " << idx << std::endl;
+                    npcs[idx].stateMachine->initiate();
+                    //std::cout << "[DEBUG] Initiated AnimationStateMachine for NPC " << idx << std::endl;
+                }
+                else {
+                    std::cerr << "[ERROR] Failed to create AnimationStateMachine for NPC " << idx << std::endl;
+                }
+            }
+            catch (const std::exception& e) {
+                std::cerr << "[ERROR] Exception during AnimationStateMachine initialization for NPC " << idx << ": " << e.what() << std::endl;
+            }
+            catch (...) {
+                std::cerr << "[ERROR] Unknown exception during AnimationStateMachine initialization for NPC " << idx << std::endl;
+            }
+
             npcs[idx].idleTimer = 0.0f;
             npcs[idx].currentPathIndex = 0;
             npcs[idx].currentRotationAngle = 0.0f;
@@ -699,12 +722,10 @@ int main() {
 
             // Assign different animation ranges to even and odd indexed NPCs
             if (idx % 2 == 0) {
-                npcs[idx].startFrame = 0.0f;   // Idle animation start
-                npcs[idx].endFrame = 58.0f;    // Idle animation end
+                npcs[idx].stateMachine->setAnimationFrames(0.0f, 58.0f);  // Idle animation
             }
             else {
-                npcs[idx].startFrame = 59.0f;  // Run animation start
-                npcs[idx].endFrame = 78.0f;    // Run animation end
+                npcs[idx].stateMachine->setAnimationFrames(59.0f, 78.0f);  // Run animation
             }
         }
     }
@@ -720,12 +741,12 @@ int main() {
     unsigned int instanceVBO;
     glGenBuffers(1, &instanceVBO);
     glBindBuffer(GL_ARRAY_BUFFER, instanceVBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(glm::mat4) * numInstances + sizeof(glm::vec3) * numInstances + sizeof(float) * numInstances * 3, nullptr, GL_STATIC_DRAW);
-    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(glm::mat4) * numInstances, instanceModels.data());
-    glBufferSubData(GL_ARRAY_BUFFER, sizeof(glm::mat4) * numInstances, sizeof(glm::vec3) * numInstances, instanceColors.data());
-    glBufferSubData(GL_ARRAY_BUFFER, sizeof(glm::mat4) * numInstances + sizeof(glm::vec3) * numInstances, sizeof(float) * numInstances, instanceAnimationTimes.data());
-    glBufferSubData(GL_ARRAY_BUFFER, sizeof(glm::mat4) * numInstances + sizeof(glm::vec3) * numInstances + sizeof(float) * numInstances, sizeof(float) * numInstances, instanceStartFrames.data());
-    glBufferSubData(GL_ARRAY_BUFFER, sizeof(glm::mat4) * numInstances + sizeof(glm::vec3) * numInstances + sizeof(float) * numInstances * 2, sizeof(float) * numInstances, instanceEndFrames.data());
+    glBufferData(GL_ARRAY_BUFFER, sizeof(glm::mat4)* numInstances + sizeof(glm::vec3) * numInstances + sizeof(float) * numInstances * 3, nullptr, GL_STATIC_DRAW);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(glm::mat4)* numInstances, instanceModels.data());
+    glBufferSubData(GL_ARRAY_BUFFER, sizeof(glm::mat4)* numInstances, sizeof(glm::vec3)* numInstances, instanceColors.data());
+    glBufferSubData(GL_ARRAY_BUFFER, sizeof(glm::mat4)* numInstances + sizeof(glm::vec3) * numInstances, sizeof(float)* numInstances, instanceAnimationTimes.data());
+    glBufferSubData(GL_ARRAY_BUFFER, sizeof(glm::mat4)* numInstances + sizeof(glm::vec3) * numInstances + sizeof(float) * numInstances, sizeof(float)* numInstances, instanceStartFrames.data());
+    glBufferSubData(GL_ARRAY_BUFFER, sizeof(glm::mat4)* numInstances + sizeof(glm::vec3) * numInstances + sizeof(float) * numInstances * 2, sizeof(float)* numInstances, instanceEndFrames.data());
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 
     for (const auto& mesh : loadedMeshes) {
@@ -795,73 +816,99 @@ int main() {
         viewMatrix = camera.getViewMatrix();
 
         // Update animations and bone transforms for each NPC
-        for (auto& npc : npcs) {
-            npc.animationTime += deltaTime;
+        for (size_t i = 0; i < npcs.size(); ++i) {
+            auto& npc = npcs[i];
+            if (!npc.stateMachine) {
+                std::cerr << "[ERROR] State machine is null for NPC " << i << std::endl;
+                continue;
+            }
 
-            // Ensure the animation loops within its assigned range
-            float animationDuration = npc.endFrame - npc.startFrame;
-            npc.animationTime = npc.startFrame + fmod(npc.animationTime - npc.startFrame, animationDuration);
+            try {
+                npc.animationTime += deltaTime;
 
-            // Update animation state based on the state machine
-            if (npc.stateMachine->state_cast<const Idle*>() != nullptr) {
-                npc.currentAnimationIndex = 0; // Idle animation
-                npc.blendFactor = glm::max(0.0f, npc.blendFactor - blendSpeed * deltaTime);
-                npc.idleTimer += deltaTime;
-                if (npc.idleTimer >= IDLE_DURATION) {
-                    float randX = std::clamp(std::uniform_real_distribution<float>(-GRID_SIZE / 2, GRID_SIZE / 2)(gen),
-                        -GRID_SIZE / 2.0f + 1.0f, GRID_SIZE / 2.0f - 1.0f);
-                    float randZ = std::clamp(std::uniform_real_distribution<float>(-GRID_SIZE / 2, GRID_SIZE / 2)(gen),
-                        -GRID_SIZE / 2.0f + 1.0f, GRID_SIZE / 2.0f - 1.0f);
-                    npc.currentDestination = glm::vec3(randX, 0.0f, randZ);
-                    npc.currentPath = findPath(npc.position, npc.currentDestination);
-                    if (!npc.currentPath.empty()) {
+                // Ensure the animation loops within its assigned range
+                float animationDuration = npc.stateMachine->endFrame - npc.stateMachine->startFrame;
+                if (animationDuration <= 0) {
+                    std::cerr << "[ERROR] Invalid animation duration for NPC " << i << std::endl;
+                    continue;
+                }
+                npc.animationTime = npc.stateMachine->startFrame + std::fmod(npc.animationTime - npc.stateMachine->startFrame, animationDuration);
+
+                // Update animation state based on the state machine
+                if (npc.stateMachine->state_cast<const Idle*>() != nullptr) {
+                    //std::cout << "[DEBUG] NPC " << i << " in Idle state, address: " << npc.stateMachine.get() << std::endl;
+                    npc.currentAnimationIndex = 0; // Idle animation
+                    npc.blendFactor = glm::max(0.0f, npc.blendFactor - blendSpeed * deltaTime);
+                    npc.idleTimer += deltaTime;
+                    if (npc.idleTimer >= IDLE_DURATION) {
+                        float randX = std::clamp(std::uniform_real_distribution<float>(-GRID_SIZE / 2, GRID_SIZE / 2)(gen),
+                            -GRID_SIZE / 2.0f + 1.0f, GRID_SIZE / 2.0f - 1.0f);
+                        float randZ = std::clamp(std::uniform_real_distribution<float>(-GRID_SIZE / 2, GRID_SIZE / 2)(gen),
+                            -GRID_SIZE / 2.0f + 1.0f, GRID_SIZE / 2.0f - 1.0f);
+                        npc.currentDestination = glm::vec3(randX, 0.0f, randZ);
+                        npc.currentPath = findPath(npc.position, npc.currentDestination);
+                        if (!npc.currentPath.empty()) {
+                            npc.currentPathIndex = 0;
+                            npc.idleTimer = 0.0f;
+                            //std::cout << "[DEBUG] NPC " << i << " attempting transition to Wandering state" << std::endl;
+                            npc.stateMachine->process_event(StartWandering());
+                        }
+                        else {
+                            npc.idleTimer = IDLE_DURATION; // Try again next frame
+                            std::cout << "[DEBUG] NPC " << i << " failed to find path, staying in Idle state" << std::endl;
+                        }
+                    }
+                }
+                else if (npc.stateMachine->state_cast<const Wandering*>() != nullptr) {
+                    //std::cout << "[DEBUG] NPC " << i << " in Wandering state, address: " << npc.stateMachine.get() << std::endl;
+                    npc.currentAnimationIndex = 1; // Use running animation for wandering
+                    npc.blendFactor = glm::min(1.0f, npc.blendFactor + blendSpeed * deltaTime);
+                    if (!npc.currentPath.empty() && npc.currentPathIndex < npc.currentPath.size()) {
+                        glm::vec3 targetPosition = npc.currentPath[npc.currentPathIndex];
+                        glm::vec3 direction = targetPosition - npc.position;
+                        if (glm::length(direction) > PATH_COMPLETION_CHECK_THRESHOLD) {
+                            direction = glm::normalize(direction);
+                            float targetRotation = std::atan2(-direction.z, direction.x);
+                            float newRotation = lerpAngle(npc.currentRotationAngle, targetRotation, rotationSpeed * deltaTime);
+                            npc.currentRotationMatrix = glm::rotate(glm::mat4(1.0f), newRotation, glm::vec3(0.0f, 1.0f, 0.0f));
+                            npc.currentRotationAngle = newRotation;
+                            glm::vec3 movement = direction * movementSpeed * deltaTime;
+                            npc.position += movement;
+                            // Clamp NPC position to world boundaries
+                            npc.position = glm::clamp(npc.position,
+                                glm::vec3(-WORLD_SIZE / 2.0f + 1.0f, 0.0f, -WORLD_SIZE / 2.0f + 1.0f),
+                                glm::vec3(WORLD_SIZE / 2.0f - 1.0f, 0.0f, WORLD_SIZE / 2.0f - 1.0f));
+                        }
+                        else {
+                            npc.currentPathIndex++;
+                            //std::cout << "[DEBUG] NPC " << i << " reached waypoint " << npc.currentPathIndex << " of " << npc.currentPath.size() << std::endl;
+                        }
+                    }
+                    if (npc.currentPathIndex >= npc.currentPath.size()) {
+                        //std::cout << "[DEBUG] NPC " << i << " completed path, transitioning to Idle state" << std::endl;
+                        npc.stateMachine->process_event(PathComplete());
+                        npc.currentPath.clear();
                         npc.currentPathIndex = 0;
                         npc.idleTimer = 0.0f;
-                        npc.stateMachine->process_event(StartWandering());
-                    }
-                    else {
-                        npc.idleTimer = IDLE_DURATION; // Try again next frame
                     }
                 }
+                else {
+                    std::cerr << "[ERROR] NPC " << i << " in unknown state" << std::endl;
+                }
+
+                // Update model matrix
+                npc.modelMatrix = glm::translate(glm::mat4(1.0f), npc.position) *
+                    npc.currentRotationMatrix *
+                    glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(-1.0f, 0.0f, 0.0f)) *
+                    glm::scale(glm::mat4(1.0f), glm::vec3(0.025f));
+
             }
-            else if (npc.stateMachine->state_cast<const Wandering*>() != nullptr) {
-                npc.currentAnimationIndex = 1; // Use running animation for wandering
-                npc.blendFactor = glm::min(1.0f, npc.blendFactor + blendSpeed * deltaTime);
-                if (!npc.currentPath.empty() && npc.currentPathIndex < npc.currentPath.size()) {
-                    glm::vec3 targetPosition = npc.currentPath[npc.currentPathIndex];
-                    glm::vec3 direction = targetPosition - npc.position;
-
-                    if (glm::length(direction) > PATH_COMPLETION_CHECK_THRESHOLD) {
-                        direction = glm::normalize(direction);
-                        float targetRotation = std::atan2(-direction.z, direction.x);
-                        float newRotation = lerpAngle(npc.currentRotationAngle, targetRotation, rotationSpeed * deltaTime);
-                        npc.currentRotationMatrix = glm::rotate(glm::mat4(1.0f), newRotation, glm::vec3(0.0f, 1.0f, 0.0f));
-                        npc.currentRotationAngle = newRotation;
-                        glm::vec3 movement = direction * movementSpeed * deltaTime;
-                        npc.position += movement;
-
-                        // Clamp NPC position to world boundaries
-                        npc.position = glm::clamp(npc.position,
-                            glm::vec3(-WORLD_SIZE / 2.0f + 1.0f, 0.0f, -WORLD_SIZE / 2.0f + 1.0f),
-                            glm::vec3(WORLD_SIZE / 2.0f - 1.0f, 0.0f, WORLD_SIZE / 2.0f - 1.0f));
-                    }
-                    else {
-                        npc.currentPathIndex++;
-                    }
-                }
-                if (npc.currentPathIndex >= npc.currentPath.size()) {
-                    npc.stateMachine->process_event(PathComplete());
-                    npc.currentPath.clear();
-                    npc.currentPathIndex = 0;
-                    npc.idleTimer = 0.0f;
-                }
+            catch (const std::exception& e) {
+                std::cerr << "[ERROR] Exception during state machine processing for NPC " << i << ": " << e.what() << std::endl;
             }
-
-            // Update model matrix
-            npc.modelMatrix = glm::translate(glm::mat4(1.0f), npc.position) *
-                npc.currentRotationMatrix *
-                glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(-1.0f, 0.0f, 0.0f)) *
-                glm::scale(glm::mat4(1.0f), glm::vec3(0.025f));
+            catch (...) {
+                std::cerr << "[ERROR] Unknown exception during state machine processing for NPC " << i << std::endl;
+            }
         }
 
         // Update instance data for GPU
@@ -869,7 +916,7 @@ int main() {
             instanceModels[i] = npcs[i].modelMatrix;
 
             // Set color based on animation state
-            if (npcs[i].startFrame < 59.0f) {
+            if (npcs[i].stateMachine->startFrame < 59.0f) {
                 instanceColors[i] = currentArmorColor;  // Blue for idle
             }
             else {
@@ -877,30 +924,24 @@ int main() {
             }
 
             instanceAnimationTimes[i] = npcs[i].animationTime;
-            instanceStartFrames[i] = npcs[i].startFrame;
-            instanceEndFrames[i] = npcs[i].endFrame;
+            instanceStartFrames[i] = npcs[i].stateMachine->startFrame;
+            instanceEndFrames[i] = npcs[i].stateMachine->endFrame;
         }
 
         glBindBuffer(GL_ARRAY_BUFFER, instanceVBO);
-        glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(glm::mat4)* numInstances, instanceModels.data());
-        glBufferSubData(GL_ARRAY_BUFFER, sizeof(glm::mat4)* numInstances, sizeof(glm::vec3)* numInstances, instanceColors.data());
-        glBufferSubData(GL_ARRAY_BUFFER, sizeof(glm::mat4)* numInstances + sizeof(glm::vec3) * numInstances, sizeof(float)* numInstances, instanceAnimationTimes.data());
-        glBufferSubData(GL_ARRAY_BUFFER, sizeof(glm::mat4)* numInstances + sizeof(glm::vec3) * numInstances + sizeof(float) * numInstances, sizeof(float)* numInstances, instanceStartFrames.data());
-        glBufferSubData(GL_ARRAY_BUFFER, sizeof(glm::mat4)* numInstances + sizeof(glm::vec3) * numInstances + sizeof(float) * numInstances * 2, sizeof(float)* numInstances, instanceEndFrames.data());
+        glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(glm::mat4) * numInstances, instanceModels.data());
+        glBufferSubData(GL_ARRAY_BUFFER, sizeof(glm::mat4) * numInstances, sizeof(glm::vec3) * numInstances, instanceColors.data());
+        glBufferSubData(GL_ARRAY_BUFFER, sizeof(glm::mat4) * numInstances + sizeof(glm::vec3) * numInstances, sizeof(float) * numInstances, instanceAnimationTimes.data());
+        glBufferSubData(GL_ARRAY_BUFFER, sizeof(glm::mat4) * numInstances + sizeof(glm::vec3) * numInstances + sizeof(float) * numInstances, sizeof(float) * numInstances, instanceStartFrames.data());
+        glBufferSubData(GL_ARRAY_BUFFER, sizeof(glm::mat4) * numInstances + sizeof(glm::vec3) * numInstances + sizeof(float) * numInstances * 2, sizeof(float) * numInstances, instanceEndFrames.data());
         glBindBuffer(GL_ARRAY_BUFFER, 0);
 
-        // Update bone transforms for idle animation
+        // Update bone transforms and upload to TBO
         modelLoader.updateBoneTransforms(currentFrame, { "combat_sword_idle" }, 0.0f, 0.0f, 58.0f);
-        std::vector<glm::mat4> idleBoneTransforms = modelLoader.getBoneTransforms();
+        glBindBuffer(GL_TEXTURE_BUFFER, modelLoader.getBoneTransformsTBO());
+        glBufferSubData(GL_TEXTURE_BUFFER, 0, modelLoader.getBoneTransforms().size() * sizeof(glm::mat4), modelLoader.getBoneTransforms().data());
+        glBindBuffer(GL_TEXTURE_BUFFER, 0);
 
-        // Update bone transforms for run animation
-        modelLoader.updateBoneTransforms(currentFrame, { "combat_sword_move_front" }, 0.0f, 59.0f, 78.0f);
-        std::vector<glm::mat4> runBoneTransforms = modelLoader.getBoneTransforms();
-
-        // Get updated bone transforms
-        std::vector<glm::mat4> boneTransforms = modelLoader.getBoneTransforms();
-
-        // Render character instances
         glUseProgram(characterShaderProgram);
         glUniformMatrix4fv(glGetUniformLocation(characterShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(viewMatrix));
         glUniformMatrix4fv(glGetUniformLocation(characterShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projectionMatrix));
@@ -987,7 +1028,6 @@ int main() {
     glDeleteVertexArrays(1, &debugVAO);
     glDeleteBuffers(1, &debugVBO);
     glDeleteProgram(debugShaderProgram);
-    glDeleteBuffers(1, &boneTransformsSSBO);
 
     glfwTerminate();
     return 0;
@@ -1224,16 +1264,16 @@ void initDebugRendering() {
     glGenBuffers(1, &debugVBO);
 }
 
-void initSSBO() {
-    glGenBuffers(1, &boneTransformsSSBO);
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, boneTransformsSSBO);
+void initTBO() {
+    GLuint boneTransformsTBO;
+    glGenBuffers(1, &boneTransformsTBO);
+    glBindBuffer(GL_TEXTURE_BUFFER, boneTransformsTBO);
+    glBufferData(GL_TEXTURE_BUFFER, sizeof(glm::mat4) * modelLoader.getBoneTransforms().size(), nullptr, GL_DYNAMIC_DRAW);
 
-    // Allocate initial space for the SSBO (this can be resized later if needed)
-    glBufferData(GL_SHADER_STORAGE_BUFFER, 40 * sizeof(glm::mat4), nullptr, GL_DYNAMIC_DRAW);
+    GLuint boneTransformsTBOTexture;
+    glGenTextures(1, &boneTransformsTBOTexture);
+    glBindTexture(GL_TEXTURE_BUFFER, boneTransformsTBOTexture);
+    glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, boneTransformsTBO);
 
-    // Bind the SSBO to a binding point (0 in this case)
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, boneTransformsSSBO);
-
-    // Unbind the SSBO
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    modelLoader.setBoneTransformsTBO(boneTransformsTBO, boneTransformsTBOTexture);
 }

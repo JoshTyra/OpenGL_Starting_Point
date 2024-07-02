@@ -93,11 +93,10 @@ void ModelLoader::updateBoneTransforms(float timeInSeconds, std::vector<std::str
 
     boneTransforms = blendedBoneTransforms;
 
-    // Upload the bone transforms to the SSBO
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, boneTransformsSSBO);
-    glBufferData(GL_SHADER_STORAGE_BUFFER, boneTransforms.size() * sizeof(glm::mat4), boneTransforms.data(), GL_DYNAMIC_DRAW);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, boneTransformsSSBO);
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    // Upload the bone transforms to the TBO
+    glBindBuffer(GL_TEXTURE_BUFFER, boneTransformsTBO);
+    glBufferData(GL_TEXTURE_BUFFER, boneTransforms.size() * sizeof(glm::mat4), boneTransforms.data(), GL_DYNAMIC_DRAW);
+    glBindBuffer(GL_TEXTURE_BUFFER, 0);
 }
 
 const std::vector<Mesh>& ModelLoader::getLoadedMeshes() const {
@@ -490,7 +489,11 @@ void ModelLoader::updateHeadRotation(float deltaTime, std::vector<std::string> a
     }
 }
 
-void ModelLoader::setBoneTransformsSSBO(GLuint ssbo) {
-    boneTransformsSSBO = ssbo;
+void ModelLoader::setBoneTransformsTBO(GLuint tbo, GLuint tboTexture) {
+    boneTransformsTBO = tbo;
+    boneTransformsTBOTexture = tboTexture;
 }
 
+GLuint ModelLoader::getBoneTransformsTBO() const {
+    return boneTransformsTBO;
+}

@@ -70,8 +70,8 @@ public:
     const std::vector<glm::mat4>& getBoneTransforms() const;
     void processAnimations();
     void updateHeadRotation(float deltaTime, std::vector<std::string> animationNames, int currentAnimationIndex);
-
-    void setBoneTransformsSSBO(GLuint ssbo); // New method to set the SSBO
+    void setBoneTransformsTBO(GLuint tbo, GLuint tboTexture);
+    GLuint getBoneTransformsTBO() const; // Added method declaration
 
 private:
     void processNode(aiNode* node, const aiScene* scene);
@@ -108,7 +108,8 @@ private:
     bool headRotationInProgress;
     std::vector<glm::vec2> headPoses;
 
-    GLuint boneTransformsSSBO; // SSBO for bone transforms
+    GLuint boneTransformsTBO; // TBO for bone transforms
+    GLuint boneTransformsTBOTexture; // TBO texture
 };
 
 #endif // MODELLOADER_H
