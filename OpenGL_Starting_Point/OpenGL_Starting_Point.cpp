@@ -692,15 +692,14 @@ int main() {
             npcs[idx].color = getRandomColor();
 
             try {
-                //std::cout << "[DEBUG] Creating AnimationStateMachine for NPC " << idx << std::endl;
+                std::cout << "[DEBUG] Creating AnimationStateMachine for NPC " << idx << std::endl;
                 npcs[idx].stateMachine = std::make_unique<AnimationStateMachine>();
-                //std::cout << "[DEBUG] Created AnimationStateMachine for NPC " << idx << ", address: " << npcs[idx].stateMachine.get() << std::endl;
+                std::cout << "[DEBUG] Created AnimationStateMachine for NPC " << idx << ", address: " << npcs[idx].stateMachine.get() << std::endl;
 
                 if (npcs[idx].stateMachine) {
-                    npcs[idx].stateMachine->setAnimationFrames(0.0f, 58.0f);
-                    //std::cout << "[DEBUG] About to initiate AnimationStateMachine for NPC " << idx << std::endl;
+                    std::cout << "[DEBUG] About to initiate AnimationStateMachine for NPC " << idx << std::endl;
                     npcs[idx].stateMachine->initiate();
-                    //std::cout << "[DEBUG] Initiated AnimationStateMachine for NPC " << idx << std::endl;
+                    std::cout << "[DEBUG] Initiated AnimationStateMachine for NPC " << idx << std::endl;
                 }
                 else {
                     std::cerr << "[ERROR] Failed to create AnimationStateMachine for NPC " << idx << std::endl;
@@ -720,12 +719,11 @@ int main() {
             npcs[idx].blendFactor = 0.0f;
             npcs[idx].currentAnimationIndex = 0;
 
-            // Assign different animation ranges to even and odd indexed NPCs
             if (idx % 2 == 0) {
-                npcs[idx].stateMachine->setAnimationFrames(0.0f, 58.0f);  // Idle animation
+                npcs[idx].stateMachine->setAnimationFrames(0.0f, 58.0f);
             }
             else {
-                npcs[idx].stateMachine->setAnimationFrames(59.0f, 78.0f);  // Run animation
+                npcs[idx].stateMachine->setAnimationFrames(59.0f, 78.0f);
             }
         }
     }
