@@ -85,7 +85,8 @@ struct NPC {
     NPC() : stateMachine(std::make_unique<AnimationStateMachine>()), animationTime(0.0f), startFrame(0.0f), endFrame(1.0f) {}
 };
 
-std::vector<NPC> npcs;
+const int numInstances = 64;
+std::vector<NPC> npcs(numInstances);
 
 // Plane geometry shit
 unsigned int planeVAO, planeVBO;
@@ -659,10 +660,6 @@ int main() {
     const float blendSpeed = 5.0f; // Increase this value to make transitions faster
     glm::mat4 currentRotationMatrix = glm::mat4(1.0f);
 
-    const int numInstances = 64;
-
-    std::vector<NPC> npcs(numInstances);
-
     // Create buffers for instance data
     std::vector<glm::mat4> instanceModels(numInstances);
     std::vector<glm::vec3> instanceColors(numInstances);
@@ -718,13 +715,6 @@ int main() {
             npcs[idx].currentRotationMatrix = glm::mat4(1.0f);
             npcs[idx].blendFactor = 0.0f;
             npcs[idx].currentAnimationIndex = 0;
-
-            if (idx % 2 == 0) {
-                npcs[idx].stateMachine->setAnimationFrames(0.0f, 58.0f);
-            }
-            else {
-                npcs[idx].stateMachine->setAnimationFrames(59.0f, 78.0f);
-            }
         }
     }
 
@@ -912,15 +902,6 @@ int main() {
         // Update instance data for GPU
         for (size_t i = 0; i < npcs.size(); ++i) {
             instanceModels[i] = npcs[i].modelMatrix;
-
-            // Set color based on animation state
-            if (npcs[i].stateMachine->startFrame < 59.0f) {
-                instanceColors[i] = currentArmorColor;  // Blue for idle
-            }
-            else {
-                instanceColors[i] = currentArmorColor;  // Red for running
-            }
-
             instanceAnimationTimes[i] = npcs[i].animationTime;
             instanceStartFrames[i] = npcs[i].stateMachine->startFrame;
             instanceEndFrames[i] = npcs[i].stateMachine->endFrame;
