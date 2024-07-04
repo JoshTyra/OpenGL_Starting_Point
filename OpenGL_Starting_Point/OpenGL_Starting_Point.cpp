@@ -127,11 +127,6 @@ void windowIconifyCallback(GLFWwindow* window, int iconified);
 void createPlane(float width, float height, float textureTiling);
 void loadPlaneTexture();
 void initPlaneShaders();
-bool isValidCell(int x, int y);
-float heuristic(int x1, int y1, int x2, int y2);
-std::vector<glm::vec3> findPath(const glm::vec3& start, const glm::vec3& goal);
-void drawDebugLines();
-void initDebugRendering();
 void initTBO();
 
 unsigned int loadCubemap(std::vector<std::string> faces) {
@@ -586,8 +581,6 @@ int main() {
 
     glEnable(GL_DEPTH_TEST);
 
-    initDebugRendering();
-
     // Initialize shaders
     initShaders();
 
@@ -687,28 +680,7 @@ int main() {
             npcs[idx].position = glm::vec3(x, y, z);
             npcs[idx].modelMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(x, y, z)) * originalModelMatrix;
             npcs[idx].color = getRandomColor();
-
-            try {
-                std::cout << "[DEBUG] Creating AnimationStateMachine for NPC " << idx << std::endl;
-                npcs[idx].stateMachine = std::make_unique<AnimationStateMachine>();
-                std::cout << "[DEBUG] Created AnimationStateMachine for NPC " << idx << ", address: " << npcs[idx].stateMachine.get() << std::endl;
-
-                if (npcs[idx].stateMachine) {
-                    std::cout << "[DEBUG] About to initiate AnimationStateMachine for NPC " << idx << std::endl;
-                    npcs[idx].stateMachine->initiate();
-                    std::cout << "[DEBUG] Initiated AnimationStateMachine for NPC " << idx << std::endl;
-                }
-                else {
-                    std::cerr << "[ERROR] Failed to create AnimationStateMachine for NPC " << idx << std::endl;
-                }
-            }
-            catch (const std::exception& e) {
-                std::cerr << "[ERROR] Exception during AnimationStateMachine initialization for NPC " << idx << ": " << e.what() << std::endl;
-            }
-            catch (...) {
-                std::cerr << "[ERROR] Unknown exception during AnimationStateMachine initialization for NPC " << idx << std::endl;
-            }
-
+            npcs[idx].stateMachine = std::make_unique<AnimationStateMachine>();
             npcs[idx].idleTimer = 0.0f;
             npcs[idx].currentPathIndex = 0;
             npcs[idx].currentRotationAngle = 0.0f;
@@ -803,102 +775,6 @@ int main() {
         projectionMatrix = camera.getProjectionMatrix(static_cast<float>(WIDTH) / static_cast<float>(HEIGHT));
         viewMatrix = camera.getViewMatrix();
 
-        // Update animations and bone transforms for each NPC
-        for (size_t i = 0; i < npcs.size(); ++i) {
-            auto& npc = npcs[i];
-            if (!npc.stateMachine) {
-                std::cerr << "[ERROR] State machine is null for NPC " << i << std::endl;
-                continue;
-            }
-
-            try {
-                npc.animationTime += deltaTime;
-
-                // Ensure the animation loops within its assigned range
-                float animationDuration = npc.stateMachine->endFrame - npc.stateMachine->startFrame;
-                if (animationDuration <= 0) {
-                    std::cerr << "[ERROR] Invalid animation duration for NPC " << i << std::endl;
-                    continue;
-                }
-                npc.animationTime = npc.stateMachine->startFrame + std::fmod(npc.animationTime - npc.stateMachine->startFrame, animationDuration);
-
-                // Update animation state based on the state machine
-                if (npc.stateMachine->state_cast<const Idle*>() != nullptr) {
-                    //std::cout << "[DEBUG] NPC " << i << " in Idle state, address: " << npc.stateMachine.get() << std::endl;
-                    npc.currentAnimationIndex = 0; // Idle animation
-                    npc.blendFactor = glm::max(0.0f, npc.blendFactor - blendSpeed * deltaTime);
-                    npc.idleTimer += deltaTime;
-                    if (npc.idleTimer >= IDLE_DURATION) {
-                        float randX = std::clamp(std::uniform_real_distribution<float>(-GRID_SIZE / 2, GRID_SIZE / 2)(gen),
-                            -GRID_SIZE / 2.0f + 1.0f, GRID_SIZE / 2.0f - 1.0f);
-                        float randZ = std::clamp(std::uniform_real_distribution<float>(-GRID_SIZE / 2, GRID_SIZE / 2)(gen),
-                            -GRID_SIZE / 2.0f + 1.0f, GRID_SIZE / 2.0f - 1.0f);
-                        npc.currentDestination = glm::vec3(randX, 0.0f, randZ);
-                        npc.currentPath = findPath(npc.position, npc.currentDestination);
-                        if (!npc.currentPath.empty()) {
-                            npc.currentPathIndex = 0;
-                            npc.idleTimer = 0.0f;
-                            //std::cout << "[DEBUG] NPC " << i << " attempting transition to Wandering state" << std::endl;
-                            npc.stateMachine->process_event(StartWandering());
-                        }
-                        else {
-                            npc.idleTimer = IDLE_DURATION; // Try again next frame
-                            std::cout << "[DEBUG] NPC " << i << " failed to find path, staying in Idle state" << std::endl;
-                        }
-                    }
-                }
-                else if (npc.stateMachine->state_cast<const Wandering*>() != nullptr) {
-                    //std::cout << "[DEBUG] NPC " << i << " in Wandering state, address: " << npc.stateMachine.get() << std::endl;
-                    npc.currentAnimationIndex = 1; // Use running animation for wandering
-                    npc.blendFactor = glm::min(1.0f, npc.blendFactor + blendSpeed * deltaTime);
-                    if (!npc.currentPath.empty() && npc.currentPathIndex < npc.currentPath.size()) {
-                        glm::vec3 targetPosition = npc.currentPath[npc.currentPathIndex];
-                        glm::vec3 direction = targetPosition - npc.position;
-                        if (glm::length(direction) > PATH_COMPLETION_CHECK_THRESHOLD) {
-                            direction = glm::normalize(direction);
-                            float targetRotation = std::atan2(-direction.z, direction.x);
-                            float newRotation = lerpAngle(npc.currentRotationAngle, targetRotation, rotationSpeed * deltaTime);
-                            npc.currentRotationMatrix = glm::rotate(glm::mat4(1.0f), newRotation, glm::vec3(0.0f, 1.0f, 0.0f));
-                            npc.currentRotationAngle = newRotation;
-                            glm::vec3 movement = direction * movementSpeed * deltaTime;
-                            npc.position += movement;
-                            // Clamp NPC position to world boundaries
-                            npc.position = glm::clamp(npc.position,
-                                glm::vec3(-WORLD_SIZE / 2.0f + 1.0f, 0.0f, -WORLD_SIZE / 2.0f + 1.0f),
-                                glm::vec3(WORLD_SIZE / 2.0f - 1.0f, 0.0f, WORLD_SIZE / 2.0f - 1.0f));
-                        }
-                        else {
-                            npc.currentPathIndex++;
-                            //std::cout << "[DEBUG] NPC " << i << " reached waypoint " << npc.currentPathIndex << " of " << npc.currentPath.size() << std::endl;
-                        }
-                    }
-                    if (npc.currentPathIndex >= npc.currentPath.size()) {
-                        //std::cout << "[DEBUG] NPC " << i << " completed path, transitioning to Idle state" << std::endl;
-                        npc.stateMachine->process_event(PathComplete());
-                        npc.currentPath.clear();
-                        npc.currentPathIndex = 0;
-                        npc.idleTimer = 0.0f;
-                    }
-                }
-                else {
-                    std::cerr << "[ERROR] NPC " << i << " in unknown state" << std::endl;
-                }
-
-                // Update model matrix
-                npc.modelMatrix = glm::translate(glm::mat4(1.0f), npc.position) *
-                    npc.currentRotationMatrix *
-                    glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(-1.0f, 0.0f, 0.0f)) *
-                    glm::scale(glm::mat4(1.0f), glm::vec3(0.025f));
-
-            }
-            catch (const std::exception& e) {
-                std::cerr << "[ERROR] Exception during state machine processing for NPC " << i << ": " << e.what() << std::endl;
-            }
-            catch (...) {
-                std::cerr << "[ERROR] Unknown exception during state machine processing for NPC " << i << std::endl;
-            }
-        }
-
         // Update instance data for GPU
         for (size_t i = 0; i < npcs.size(); ++i) {
             instanceModels[i] = npcs[i].modelMatrix;
@@ -991,8 +867,6 @@ int main() {
         glDrawArrays(GL_TRIANGLES, 0, 6);
         glBindVertexArray(0);
 
-        drawDebugLines();
-
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
@@ -1066,181 +940,6 @@ void initPlaneShaders() {
     planeShaderProgram = createShaderProgram(planeVertexShader, planeFragmentShader);
     glDeleteShader(planeVertexShader);
     glDeleteShader(planeFragmentShader);
-}
-
-// Function to check if a cell is valid and walkable
-bool isValidCell(int x, int y) {
-    if (x < 0 || x >= GRID_SIZE || y < 0 || y >= GRID_SIZE) {
-        return false;
-    }
-    return navigationGrid[x][y];
-}
-
-// Heuristic function for A* (Manhattan distance)
-float heuristic(int x1, int y1, int x2, int y2) {
-    return std::abs(x1 - x2) + std::abs(y1 - y2);
-}
-
-std::vector<glm::vec3> findPath(const glm::vec3& start, const glm::vec3& goal) {
-    if (glm::distance(start, goal) < 0.1f) {
-        return std::vector<glm::vec3>();
-    }
-
-    if (std::isnan(start.x) || std::isnan(start.y) || std::isnan(start.z) ||
-        std::isnan(goal.x) || std::isnan(goal.y) || std::isnan(goal.z)) {
-        std::cout << "Invalid start or goal position (NaN detected)." << std::endl;
-        return std::vector<glm::vec3>();
-    }
-
-    int startX = static_cast<int>((start.x + WORLD_SIZE / 2) / CELL_SIZE);
-    int startY = static_cast<int>((start.z + WORLD_SIZE / 2) / CELL_SIZE);
-    int goalX = static_cast<int>((goal.x + WORLD_SIZE / 2) / CELL_SIZE);
-    int goalY = static_cast<int>((goal.z + WORLD_SIZE / 2) / CELL_SIZE);
-
-    // Clamp start and goal positions to grid boundaries
-    startX = std::clamp(startX, 0, GRID_SIZE - 1);
-    startY = std::clamp(startY, 0, GRID_SIZE - 1);
-    goalX = std::clamp(goalX, 0, GRID_SIZE - 1);
-    goalY = std::clamp(goalY, 0, GRID_SIZE - 1);
-
-    // Rest of the function remains the same
-    auto compare = [](const GridNode* a, const GridNode* b) { return a->f > b->f; };
-    std::priority_queue<GridNode*, std::vector<GridNode*>, decltype(compare)> openSet(compare);
-    std::unordered_set<GridNode*> closedSet;
-    std::vector<std::vector<GridNode*>> gridNodes(GRID_SIZE, std::vector<GridNode*>(GRID_SIZE, nullptr));
-
-    GridNode* startNode = new GridNode(startX, startY);
-    startNode->h = heuristic(startX, startY, goalX, goalY);
-    startNode->f = startNode->h;
-    openSet.push(startNode);
-    gridNodes[startX][startY] = startNode;
-
-    while (!openSet.empty()) {
-        GridNode* current = openSet.top();
-        openSet.pop();
-
-        if (current->x == goalX && current->y == goalY) {
-            // Path found, reconstruct and return
-            std::vector<glm::vec3> path;
-            while (current != nullptr) {
-                path.push_back(glm::vec3(current->x * CELL_SIZE - GRID_SIZE / 2, 0, current->y * CELL_SIZE - GRID_SIZE / 2));
-                current = current->parent;
-            }
-            std::reverse(path.begin(), path.end());
-
-            // Clean up allocated memory
-            for (auto& row : gridNodes) {
-                for (auto node : row) {
-                    delete node;
-                }
-            }
-
-            return path;
-        }
-
-        closedSet.insert(current);
-
-        // Check neighbors
-        for (int dx = -1; dx <= 1; dx++) {
-            for (int dy = -1; dy <= 1; dy++) {
-                if (dx == 0 && dy == 0) continue;
-
-                int newX = current->x + dx;
-                int newY = current->y + dy;
-
-                if (!isValidCell(newX, newY)) continue;
-
-                GridNode* neighbor = gridNodes[newX][newY];
-                if (neighbor == nullptr) {
-                    neighbor = new GridNode(newX, newY);
-                    gridNodes[newX][newY] = neighbor;
-                }
-
-                if (closedSet.find(neighbor) != closedSet.end()) continue;
-
-                float tentativeG = current->g + 1; // Assume cost of 1 to move to adjacent cell
-
-                if (tentativeG < neighbor->g || neighbor->g == 0) {
-                    neighbor->parent = current;
-                    neighbor->g = tentativeG;
-                    neighbor->h = heuristic(newX, newY, goalX, goalY);
-                    neighbor->f = neighbor->g + neighbor->h;
-
-                    openSet.push(neighbor);
-                }
-            }
-        }
-    }
-
-    // Clean up allocated memory
-    for (auto& row : gridNodes) {
-        for (auto node : row) {
-            delete node;
-        }
-    }
-
-    // No path found
-    return std::vector<glm::vec3>();
-}
-
-void drawDebugLines() {
-    debugVertices.clear();
-
-    // Generate grid lines (green)
-    for (int i = 0; i <= GRID_SIZE; i++) {
-        float pos = i * CELL_SIZE - WORLD_SIZE / 2;
-
-        // Vertical lines
-        debugVertices.insert(debugVertices.end(), { pos, 0.0025f, -WORLD_SIZE / 2, 0.0f, 1.0f, 0.0f }); // Green color
-        debugVertices.insert(debugVertices.end(), { pos, 0.0025f, WORLD_SIZE / 2, 0.0f, 1.0f, 0.0f });
-
-        // Horizontal lines
-        debugVertices.insert(debugVertices.end(), { -WORLD_SIZE / 2, 0.0025f, pos, 0.0f, 1.0f, 0.0f });
-        debugVertices.insert(debugVertices.end(), { WORLD_SIZE / 2, 0.0025f, pos, 0.0f, 1.0f, 0.0f });
-    }
-
-    // Generate path lines for each NPC (yellow)
-    for (const auto& npc : npcs) {
-        if (!npc.currentPath.empty()) {
-            for (size_t i = 0; i < npc.currentPath.size() - 1; i++) {
-                debugVertices.insert(debugVertices.end(), { npc.currentPath[i].x, 0.04f, npc.currentPath[i].z, 1.0f, 1.0f, 0.0f });
-                debugVertices.insert(debugVertices.end(), { npc.currentPath[i + 1].x, 0.04f, npc.currentPath[i + 1].z, 1.0f, 1.0f, 0.0f });
-            }
-        }
-    }
-
-    // Update VBO data
-    glBindVertexArray(debugVAO);
-    glBindBuffer(GL_ARRAY_BUFFER, debugVBO);
-    glBufferData(GL_ARRAY_BUFFER, debugVertices.size() * sizeof(float), debugVertices.data(), GL_DYNAMIC_DRAW);
-
-    // Set vertex attribute pointers
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
-    glEnableVertexAttribArray(1);
-
-    // Draw debug lines
-    glUseProgram(debugShaderProgram);
-    glUniformMatrix4fv(glGetUniformLocation(debugShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(viewMatrix));
-    glUniformMatrix4fv(glGetUniformLocation(debugShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projectionMatrix));
-
-    glBindVertexArray(debugVAO);
-    glDrawArrays(GL_LINES, 0, debugVertices.size() / 6);
-    glBindVertexArray(0);
-}
-
-void initDebugRendering() {
-    // Compile and link debug shader
-    unsigned int vertexShader = compileShader(GL_VERTEX_SHADER, debugVertexShaderSource);
-    unsigned int fragmentShader = compileShader(GL_FRAGMENT_SHADER, debugFragmentShaderSource);
-    debugShaderProgram = createShaderProgram(vertexShader, fragmentShader);
-    glDeleteShader(vertexShader);
-    glDeleteShader(fragmentShader);
-
-    // Generate VAO and VBO
-    glGenVertexArrays(1, &debugVAO);
-    glGenBuffers(1, &debugVBO);
 }
 
 void initTBO() {
