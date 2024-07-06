@@ -81,8 +81,9 @@ struct NPC {
     float animationTime;
     float startFrame;
     float endFrame;
+    bool isRunning; // Field to track if NPC is running
 
-    NPC() : stateMachine(std::make_unique<AnimationStateMachine>()), animationTime(0.0f), startFrame(0.0f), endFrame(1.0f) {}
+    NPC() : stateMachine(std::make_unique<AnimationStateMachine>()), animationTime(0.0f), startFrame(0.0f), endFrame(58.0f), isRunning(false) {}
 };
 
 const int numInstances = 64;
@@ -128,6 +129,7 @@ void createPlane(float width, float height, float textureTiling);
 void loadPlaneTexture();
 void initPlaneShaders();
 void initTBO();
+void updateNPCAnimations(float deltaTime);
 
 unsigned int loadCubemap(std::vector<std::string> faces) {
     unsigned int textureID;
@@ -221,7 +223,7 @@ unsigned int loadTexture(const char* path) {
 }
 
 const char* characterVertexShaderSource = R"(
-   #version 430 core
+    #version 430 core
 
     layout(location = 0) in vec3 aPos;
     layout(location = 1) in vec2 aTexCoord;
@@ -230,12 +232,12 @@ const char* characterVertexShaderSource = R"(
     layout(location = 4) in vec3 aBitangent;
     layout(location = 5) in ivec4 aBoneIDs;
     layout(location = 6) in vec4 aWeights;
-    // Instanced data
     layout(location = 7) in mat4 instanceModel;
     layout(location = 11) in vec3 instanceColor;
     layout(location = 12) in float instanceAnimationTime;
     layout(location = 13) in float instanceStartFrame;
     layout(location = 14) in float instanceEndFrame;
+    layout(location = 15) in int instanceID;
 
     out vec2 TexCoord;
     out vec3 FragPos;
@@ -250,39 +252,38 @@ const char* characterVertexShaderSource = R"(
     uniform vec3 lightDir;
     uniform vec3 viewPos;
 
-    // TBO declaration
     layout(binding = 4) uniform samplerBuffer boneTransformsTBO;
 
-    // Function to calculate the final bone transform
-    mat4 calculateBoneTransform(ivec4 boneIDs, vec4 weights) {
+    #define NUM_BONES 31 // Adjust this to match the maximum required per mesh
+
+    mat4 calculateBoneTransform(ivec4 boneIDs, vec4 weights, int instanceID) {
         mat4 boneTransform = mat4(0.0);
+        int boneOffset = instanceID * NUM_BONES * 4;
+
         for (int i = 0; i < 4; ++i) {
             if (weights[i] > 0.0) {
-                int index = boneIDs[i] * 4;
-                mat4 boneMatrix = mat4(
-                    texelFetch(boneTransformsTBO, index), 
-                    texelFetch(boneTransformsTBO, index + 1), 
-                    texelFetch(boneTransformsTBO, index + 2), 
-                    texelFetch(boneTransformsTBO, index + 3)
-                );
-                boneTransform += boneMatrix * weights[i];
+                int index = boneOffset + boneIDs[i] * 4;
+                if (index >= 0 && index < textureSize(boneTransformsTBO) - 3) {
+                    mat4 boneMatrix = mat4(
+                        texelFetch(boneTransformsTBO, index),
+                        texelFetch(boneTransformsTBO, index + 1),
+                        texelFetch(boneTransformsTBO, index + 2),
+                        texelFetch(boneTransformsTBO, index + 3)
+                    );
+                    boneTransform += boneMatrix * weights[i];
+                }
             }
         }
+
         return boneTransform;
     }
 
     void main() {
-        // Compute the animation time within the specified frame range
         float animationDuration = instanceEndFrame - instanceStartFrame;
         float localAnimationTime = instanceStartFrame + mod(instanceAnimationTime - instanceStartFrame, animationDuration);
 
-        // Calculate bone transformation
-        mat4 finalBoneTransform = calculateBoneTransform(aBoneIDs, aWeights);
-
-        // Apply bone transformation to vertex position
+        mat4 finalBoneTransform = calculateBoneTransform(aBoneIDs, aWeights, instanceID);
         vec3 transformedPos = vec3(finalBoneTransform * vec4(aPos, 1.0));
-
-        // Apply instance model matrix
         vec4 worldPos = instanceModel * vec4(transformedPos, 1.0);
         gl_Position = projection * view * worldPos;
 
@@ -290,18 +291,16 @@ const char* characterVertexShaderSource = R"(
         TexCoord = aTexCoord;
         InstanceColor = instanceColor;
 
-        // Transform normal, tangent, and bitangent
         mat3 normalMatrix = transpose(inverse(mat3(instanceModel) * mat3(finalBoneTransform)));
         vec3 N = normalize(normalMatrix * aNormal);
         vec3 T = normalize(normalMatrix * aTangent);
-        T = normalize(T - dot(T, N) * N); // Ensure T is orthogonal to N
+        T = normalize(T - dot(T, N) * N);
         vec3 B = normalize(cross(N, T));
 
         mat3 TBN = transpose(mat3(T, B, N));
         TangentLightDir = TBN * lightDir;
         TangentViewPos = TBN * viewPos;
         TangentFragPos = TBN * FragPos;
-
         vec3 viewDir = normalize(viewPos - FragPos);
         ReflectDir = reflect(-viewDir, N);
     }
@@ -659,6 +658,7 @@ int main() {
     std::vector<float> instanceAnimationTimes(numInstances);
     std::vector<float> instanceStartFrames(numInstances);
     std::vector<float> instanceEndFrames(numInstances);
+    std::vector<int> instanceIDs(numInstances);
 
     glm::mat4 originalModelMatrix = glm::mat4(1.0f);
     originalModelMatrix = glm::rotate(originalModelMatrix, glm::radians(90.0f), glm::vec3(-1.0f, 0.0f, 0.0f)); // Original rotation
@@ -686,7 +686,20 @@ int main() {
             npcs[idx].currentRotationAngle = 0.0f;
             npcs[idx].currentRotationMatrix = glm::mat4(1.0f);
             npcs[idx].blendFactor = 0.0f;
-            npcs[idx].currentAnimationIndex = 0;
+
+            // Assign animations
+            if (idx % 2 == 0) {
+                // Assign idle animation to even-indexed NPCs
+                npcs[idx].startFrame = 0.0f;
+                npcs[idx].endFrame = 58.0f;
+                npcs[idx].currentAnimationIndex = 0; // Assuming index 0 is for idle
+            }
+            else {
+                // Assign running animation to odd-indexed NPCs
+                npcs[idx].startFrame = 59.0f;
+                npcs[idx].endFrame = 78.0f;
+                npcs[idx].currentAnimationIndex = 1; // Assuming index 1 is for running
+            }
         }
     }
 
@@ -696,17 +709,36 @@ int main() {
         instanceAnimationTimes[i] = npcs[i].animationTime;
         instanceStartFrames[i] = npcs[i].startFrame;
         instanceEndFrames[i] = npcs[i].endFrame;
+        instanceIDs[i] = i;
     }
 
     unsigned int instanceVBO;
     glGenBuffers(1, &instanceVBO);
     glBindBuffer(GL_ARRAY_BUFFER, instanceVBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(glm::mat4)* numInstances + sizeof(glm::vec3) * numInstances + sizeof(float) * numInstances * 3, nullptr, GL_STATIC_DRAW);
-    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(glm::mat4)* numInstances, instanceModels.data());
-    glBufferSubData(GL_ARRAY_BUFFER, sizeof(glm::mat4)* numInstances, sizeof(glm::vec3)* numInstances, instanceColors.data());
-    glBufferSubData(GL_ARRAY_BUFFER, sizeof(glm::mat4)* numInstances + sizeof(glm::vec3) * numInstances, sizeof(float)* numInstances, instanceAnimationTimes.data());
-    glBufferSubData(GL_ARRAY_BUFFER, sizeof(glm::mat4)* numInstances + sizeof(glm::vec3) * numInstances + sizeof(float) * numInstances, sizeof(float)* numInstances, instanceStartFrames.data());
-    glBufferSubData(GL_ARRAY_BUFFER, sizeof(glm::mat4)* numInstances + sizeof(glm::vec3) * numInstances + sizeof(float) * numInstances * 2, sizeof(float)* numInstances, instanceEndFrames.data());
+
+    // Calculate the total size of all instance data
+    size_t totalSize = sizeof(glm::mat4) * numInstances +
+        sizeof(glm::vec3) * numInstances +
+        sizeof(float) * numInstances * 3 +
+        sizeof(int) * numInstances;  // Add this line
+
+    glBufferData(GL_ARRAY_BUFFER, totalSize, nullptr, GL_STATIC_DRAW);
+
+    // Calculate offsets for each data type
+    size_t modelOffset = 0;
+    size_t colorOffset = sizeof(glm::mat4) * numInstances;
+    size_t animTimeOffset = colorOffset + sizeof(glm::vec3) * numInstances;
+    size_t startFrameOffset = animTimeOffset + sizeof(float) * numInstances;
+    size_t endFrameOffset = startFrameOffset + sizeof(float) * numInstances;
+    size_t idOffset = endFrameOffset + sizeof(float) * numInstances;  // Add this line
+
+    glBufferSubData(GL_ARRAY_BUFFER, modelOffset, sizeof(glm::mat4)* numInstances, instanceModels.data());
+    glBufferSubData(GL_ARRAY_BUFFER, colorOffset, sizeof(glm::vec3)* numInstances, instanceColors.data());
+    glBufferSubData(GL_ARRAY_BUFFER, animTimeOffset, sizeof(float)* numInstances, instanceAnimationTimes.data());
+    glBufferSubData(GL_ARRAY_BUFFER, startFrameOffset, sizeof(float)* numInstances, instanceStartFrames.data());
+    glBufferSubData(GL_ARRAY_BUFFER, endFrameOffset, sizeof(float)* numInstances, instanceEndFrames.data());
+    glBufferSubData(GL_ARRAY_BUFFER, idOffset, sizeof(int)* numInstances, instanceIDs.data());  // Add this line
+
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 
     for (const auto& mesh : loadedMeshes) {
@@ -739,6 +771,11 @@ int main() {
         glEnableVertexAttribArray(14);
         glVertexAttribPointer(14, 1, GL_FLOAT, GL_FALSE, sizeof(float), (void*)(sizeof(glm::mat4) * numInstances + sizeof(glm::vec3) * numInstances + sizeof(float) * numInstances * 2));
         glVertexAttribDivisor(14, 1);
+
+        // Set up instance ID attribute
+        glEnableVertexAttribArray(15);
+        glVertexAttribIPointer(15, 1, GL_INT, 0, (void*)idOffset);
+        glVertexAttribDivisor(15, 1);
 
         glBindVertexArray(0);
     }
@@ -778,21 +815,22 @@ int main() {
         // Update instance data for GPU
         for (size_t i = 0; i < npcs.size(); ++i) {
             instanceModels[i] = npcs[i].modelMatrix;
+            instanceColors[i] = npcs[i].color;
             instanceAnimationTimes[i] = npcs[i].animationTime;
-            instanceStartFrames[i] = npcs[i].stateMachine->startFrame;
-            instanceEndFrames[i] = npcs[i].stateMachine->endFrame;
+            instanceStartFrames[i] = npcs[i].startFrame;
+            instanceEndFrames[i] = npcs[i].endFrame;
         }
 
         glBindBuffer(GL_ARRAY_BUFFER, instanceVBO);
-        glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(glm::mat4) * numInstances, instanceModels.data());
-        glBufferSubData(GL_ARRAY_BUFFER, sizeof(glm::mat4) * numInstances, sizeof(glm::vec3) * numInstances, instanceColors.data());
-        glBufferSubData(GL_ARRAY_BUFFER, sizeof(glm::mat4) * numInstances + sizeof(glm::vec3) * numInstances, sizeof(float) * numInstances, instanceAnimationTimes.data());
-        glBufferSubData(GL_ARRAY_BUFFER, sizeof(glm::mat4) * numInstances + sizeof(glm::vec3) * numInstances + sizeof(float) * numInstances, sizeof(float) * numInstances, instanceStartFrames.data());
-        glBufferSubData(GL_ARRAY_BUFFER, sizeof(glm::mat4) * numInstances + sizeof(glm::vec3) * numInstances + sizeof(float) * numInstances * 2, sizeof(float) * numInstances, instanceEndFrames.data());
+        glBufferSubData(GL_ARRAY_BUFFER, modelOffset, sizeof(glm::mat4) * numInstances, instanceModels.data());
+        glBufferSubData(GL_ARRAY_BUFFER, colorOffset, sizeof(glm::vec3) * numInstances, instanceColors.data());
+        glBufferSubData(GL_ARRAY_BUFFER, animTimeOffset, sizeof(float) * numInstances, instanceAnimationTimes.data());
+        glBufferSubData(GL_ARRAY_BUFFER, startFrameOffset, sizeof(float) * numInstances, instanceStartFrames.data());
+        glBufferSubData(GL_ARRAY_BUFFER, endFrameOffset, sizeof(float) * numInstances, instanceEndFrames.data());
+        // Note: You don't need to update instance IDs every frame as they don't change
         glBindBuffer(GL_ARRAY_BUFFER, 0);
 
         // Update bone transforms and upload to TBO
-        modelLoader.updateBoneTransforms(currentFrame, { "combat_sword_idle" }, 0.0f, 0.0f, 58.0f);
         glBindBuffer(GL_TEXTURE_BUFFER, modelLoader.getBoneTransformsTBO());
         glBufferSubData(GL_TEXTURE_BUFFER, 0, modelLoader.getBoneTransforms().size() * sizeof(glm::mat4), modelLoader.getBoneTransforms().data());
         glBindBuffer(GL_TEXTURE_BUFFER, 0);
@@ -800,6 +838,9 @@ int main() {
         glUseProgram(characterShaderProgram);
         glUniformMatrix4fv(glGetUniformLocation(characterShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(viewMatrix));
         glUniformMatrix4fv(glGetUniformLocation(characterShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projectionMatrix));
+
+        // Update animation states for each NPC
+        updateNPCAnimations(deltaTime);
 
         // Set up lighting uniforms
         glm::vec3 lightDir = glm::normalize(glm::vec3(0.3f, 1.0f, 0.5f));
@@ -835,6 +876,9 @@ int main() {
         glActiveTexture(GL_TEXTURE3);
         glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture);
         glUniform1i(glGetUniformLocation(characterShaderProgram, "cubemap"), 3);
+
+        glActiveTexture(GL_TEXTURE4);
+        glBindTexture(GL_TEXTURE_BUFFER, modelLoader.boneTransformsTBOTexture);
 
         for (const auto& mesh : loadedMeshes) {
             if (mesh.meshBufferIndex == 0) {
@@ -943,16 +987,29 @@ void initPlaneShaders() {
 }
 
 void initTBO() {
-    GLuint boneTransformsTBO;
-    glGenBuffers(1, &boneTransformsTBO);
-    glBindBuffer(GL_TEXTURE_BUFFER, boneTransformsTBO);
-    glBufferData(GL_TEXTURE_BUFFER, sizeof(glm::mat4) * modelLoader.getBoneTransforms().size(), nullptr, GL_DYNAMIC_DRAW);
-
-    GLuint boneTransformsTBOTexture;
-    glGenTextures(1, &boneTransformsTBOTexture);
-    glActiveTexture(GL_TEXTURE4);  // Use texture unit 4 for the TBO
-    glBindTexture(GL_TEXTURE_BUFFER, boneTransformsTBOTexture);
-    glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, boneTransformsTBO);
-
-    modelLoader.setBoneTransformsTBO(boneTransformsTBO, boneTransformsTBOTexture);
+    int maxBonesPerInstance = 31; // Must be 31 as required by the shader
+    glGenBuffers(1, &modelLoader.boneTransformsTBO);
+    glBindBuffer(GL_TEXTURE_BUFFER, modelLoader.boneTransformsTBO);
+    glBufferData(GL_TEXTURE_BUFFER, numInstances * maxBonesPerInstance * 16 * sizeof(float), NULL, GL_DYNAMIC_DRAW);
+    glGenTextures(1, &modelLoader.boneTransformsTBOTexture);
+    glBindTexture(GL_TEXTURE_BUFFER, modelLoader.boneTransformsTBOTexture);
+    glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, modelLoader.boneTransformsTBO);
+    glBindBuffer(GL_TEXTURE_BUFFER, 0);
 }
+
+void updateNPCAnimations(float deltaTime) {
+    std::vector<glm::mat4> allBoneTransforms;
+    for (NPC& npc : npcs) {
+        npc.animationTime += deltaTime;
+        std::vector<glm::mat4> npcBoneTransforms(modelLoader.getNumBones(), glm::mat4(1.0f));
+        modelLoader.updateBoneTransforms(npc.animationTime, animationNames[npc.currentAnimationIndex], npc.blendFactor, npc.startFrame, npc.endFrame, npcBoneTransforms);
+        allBoneTransforms.insert(allBoneTransforms.end(), npcBoneTransforms.begin(), npcBoneTransforms.end());
+    }
+
+    // Upload all bone transforms to the TBO
+    glBindBuffer(GL_TEXTURE_BUFFER, modelLoader.getBoneTransformsTBO());
+    glBufferData(GL_TEXTURE_BUFFER, allBoneTransforms.size() * sizeof(glm::mat4), allBoneTransforms.data(), GL_DYNAMIC_DRAW);
+    glBindBuffer(GL_TEXTURE_BUFFER, 0);
+}
+
+

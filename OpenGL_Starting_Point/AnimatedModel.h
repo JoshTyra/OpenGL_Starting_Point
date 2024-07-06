@@ -63,21 +63,25 @@ public:
     ~ModelLoader();
 
     void loadModel(const std::string& path);
-    void updateBoneTransforms(float timeInSeconds, std::vector<std::string> animationNames, float blendFactor, float startFrame, float endFrame);
+    void updateBoneTransforms(float timeInSeconds, const std::string& animationName, float blendFactor, float startFrame, float endFrame, std::vector<glm::mat4>& outBoneTransforms);
     void setCurrentAnimation(const std::string& name);
     const std::vector<Mesh>& getLoadedMeshes() const;
     const AABB& getLoadedModelAABB() const;
     const std::vector<glm::mat4>& getBoneTransforms() const;
     void processAnimations();
-    void updateHeadRotation(float deltaTime, std::vector<std::string> animationNames, int currentAnimationIndex);
+    void updateHeadRotation(float deltaTime, const std::string& animationName, int currentAnimationIndex);
     void setBoneTransformsTBO(GLuint tbo, GLuint tboTexture);
-    GLuint getBoneTransformsTBO() const; // Added method declaration
+    GLuint getBoneTransformsTBO() const;
+    size_t getNumBones() const;
+
+    GLuint boneTransformsTBO;
+    GLuint boneTransformsTBOTexture;
 
 private:
     void processNode(aiNode* node, const aiScene* scene);
     void processMesh(aiMesh* mesh, const aiScene* scene, const aiMatrix4x4& nodeTransformation);
     void storeMesh(const std::vector<Vertex>& vertices, const std::vector<unsigned int>& indices, int meshBufferIndex);
-    void readNodeHierarchy(float animationTime, const aiNode* node, const glm::mat4& parentTransform, const std::string& animationName, float startFrame, float endFrame);
+    void readNodeHierarchy(float animationTime, const aiNode* node, const glm::mat4& parentTransform, const std::string& animationName, float startFrame, float endFrame, std::vector<glm::mat4>& outBoneTransforms);
     const aiNodeAnim* findNodeAnim(const Animation& animation, const std::string& nodeName);
     void calcInterpolatedScaling(aiVector3D& out, float animationTime, const aiNodeAnim* nodeAnim);
     void calcInterpolatedRotation(aiQuaternion& out, float animationTime, const aiNodeAnim* nodeAnim);
@@ -107,9 +111,6 @@ private:
     float headRotationDuration;
     bool headRotationInProgress;
     std::vector<glm::vec2> headPoses;
-
-    GLuint boneTransformsTBO; // TBO for bone transforms
-    GLuint boneTransformsTBOTexture; // TBO texture
 };
 
 #endif // MODELLOADER_H

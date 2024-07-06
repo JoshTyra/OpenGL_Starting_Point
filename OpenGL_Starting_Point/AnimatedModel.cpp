@@ -28,8 +28,20 @@ void normalizeWeights(Vertex& vertex) {
     }
 }
 
+// Function to print bone information
+void printBoneInfo(const aiScene* scene) {
+    for (unsigned int i = 0; i < scene->mNumMeshes; ++i) {
+        aiMesh* mesh = scene->mMeshes[i];
+        std::cout << "Mesh " << i << " has " << mesh->mNumBones << " bones.\n";
+        for (unsigned int j = 0; j < mesh->mNumBones; ++j) {
+            aiBone* bone = mesh->mBones[j];
+            std::cout << "Bone " << j << ": " << bone->mName.C_Str() << "\n";
+        }
+    }
+}
+
 void ModelLoader::loadModel(const std::string& path) {
-    scene = importer.ReadFile(path, aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_CalcTangentSpace | aiProcess_JoinIdenticalVertices);
+    scene = importer.ReadFile(path, aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_CalcTangentSpace);
 
     if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode) {
         std::cerr << "ERROR::ASSIMP:: " << importer.GetErrorString() << std::endl;
@@ -37,6 +49,8 @@ void ModelLoader::loadModel(const std::string& path) {
     }
 
     std::cout << "Model loaded successfully." << std::endl;
+
+    printBoneInfo(scene);
 
     if (scene->mNumAnimations > 0) {
         std::cout << "Number of animations: " << scene->mNumAnimations << std::endl;
@@ -53,50 +67,31 @@ void ModelLoader::loadModel(const std::string& path) {
     loadedModelAABB = computeAABB(aggregatedVertices);
 }
 
-void ModelLoader::updateBoneTransforms(float timeInSeconds, std::vector<std::string> animationNames, float blendFactor, float startFrame, float endFrame) {
-    if (!scene || animationNames.empty()) {
-        boneTransforms.resize(boneInfo.size(), glm::mat4(1.0f));
+void ModelLoader::updateBoneTransforms(float timeInSeconds, const std::string& animationName, float blendFactor, float startFrame, float endFrame, std::vector<glm::mat4>& outBoneTransforms) {
+    if (!scene || animationName.empty()) {
+        outBoneTransforms.resize(boneInfo.size(), glm::mat4(1.0f));
+        std::cout << "No scene or empty animation name" << std::endl;
         return;
     }
 
     glm::mat4 identity = glm::mat4(1.0f);
     std::vector<glm::mat4> blendedBoneTransforms(boneInfo.size(), glm::mat4(0.0f));
 
-    float totalWeight = 0.0f;
-    for (size_t i = 0; i < animationNames.size(); ++i) {
-        const std::string& animationName = animationNames[i];
-        float weight = (i == 0) ? (1.0f - blendFactor) : blendFactor;
-
-        auto it = animations.find(animationName);
-        if (it != animations.end()) {
-            const Animation& animation = it->second;
-            float animationDuration = endFrame - startFrame;
-            float localAnimationTime = startFrame + fmod(timeInSeconds * animation.ticksPerSecond, animationDuration);
-
-            std::vector<glm::mat4> currentBoneTransforms(boneInfo.size(), glm::mat4(1.0f));
-            readNodeHierarchy(localAnimationTime, scene->mRootNode, identity, animationName, startFrame, endFrame);
-
-            for (size_t j = 0; j < boneInfo.size(); ++j) {
-                currentBoneTransforms[j] = boneInfo[j].FinalTransformation;
-                blendedBoneTransforms[j] += currentBoneTransforms[j] * weight;
-            }
-            totalWeight += weight;
-        }
+    auto it = animations.find(animationName);
+    if (it == animations.end()) {
+        //std::cout << "Animation not found: " << animationName << std::endl;
+        outBoneTransforms.resize(boneInfo.size(), glm::mat4(1.0f));
+        return;
     }
 
-    // Normalize the blended transformations
-    if (totalWeight > 0.0f) {
-        for (size_t j = 0; j < boneInfo.size(); ++j) {
-            blendedBoneTransforms[j] /= totalWeight;
-        }
-    }
+    const auto& animation = it->second;
+    float animationDuration = endFrame - startFrame;
+    float localAnimationTime = startFrame + fmod(timeInSeconds * animation.ticksPerSecond, animationDuration);
 
-    boneTransforms = blendedBoneTransforms;
+    std::vector<glm::mat4> currentBoneTransforms(boneInfo.size(), glm::mat4(1.0f));
+    readNodeHierarchy(localAnimationTime, scene->mRootNode, identity, animationName, startFrame, endFrame, currentBoneTransforms);
 
-    // Upload the bone transforms to the TBO
-    glBindBuffer(GL_TEXTURE_BUFFER, boneTransformsTBO);
-    glBufferData(GL_TEXTURE_BUFFER, boneTransforms.size() * sizeof(glm::mat4), boneTransforms.data(), GL_DYNAMIC_DRAW);
-    glBindBuffer(GL_TEXTURE_BUFFER, 0);
+    outBoneTransforms = currentBoneTransforms;  // Directly assign the calculated transforms
 }
 
 const std::vector<Mesh>& ModelLoader::getLoadedMeshes() const {
@@ -241,8 +236,9 @@ void ModelLoader::storeMesh(const std::vector<Vertex>& vertices, const std::vect
     loadedMeshes.push_back(mesh);
 }
 
-void ModelLoader::readNodeHierarchy(float animationTime, const aiNode* node, const glm::mat4& parentTransform, const std::string& animationName, float startFrame, float endFrame) {
+void ModelLoader::readNodeHierarchy(float animationTime, const aiNode* node, const glm::mat4& parentTransform, const std::string& animationName, float startFrame, float endFrame, std::vector<glm::mat4>& outBoneTransforms) {
     std::string nodeName(node->mName.data);
+
     glm::mat4 nodeTransformation = glm::transpose(glm::make_mat4(&node->mTransformation.a1));
     const aiNodeAnim* nodeAnim = findNodeAnim(animations[animationName], nodeName);
 
@@ -270,15 +266,14 @@ void ModelLoader::readNodeHierarchy(float animationTime, const aiNode* node, con
     if (boneMapping.find(nodeName) != boneMapping.end()) {
         int boneIndex = boneMapping[nodeName];
         if (nodeName == "head") {
-            // Apply interpolated head rotation
             glm::mat4 headRotationM = glm::mat4_cast(currentHeadRotation);
             globalTransformation = globalTransformation * headRotationM;
         }
-        boneInfo[boneIndex].FinalTransformation = globalTransformation * boneInfo[boneIndex].BoneOffset;
+        outBoneTransforms[boneIndex] = globalTransformation * boneInfo[boneIndex].BoneOffset;
     }
 
     for (unsigned int i = 0; i < node->mNumChildren; i++) {
-        readNodeHierarchy(animationTime, node->mChildren[i], globalTransformation, animationName, startFrame, endFrame);
+        readNodeHierarchy(animationTime, node->mChildren[i], globalTransformation, animationName, startFrame, endFrame, outBoneTransforms);
     }
 }
 
@@ -451,9 +446,8 @@ void ModelLoader::setCurrentAnimation(const std::string& name) {
     }
 }
 
-void ModelLoader::updateHeadRotation(float deltaTime, std::vector<std::string> animationNames, int currentAnimationIndex) {
-    // Check if current animation is "combat_sword_idle"
-    if (animationNames[currentAnimationIndex] == "combat_sword_idle" || animationNames[currentAnimationIndex] == "ui_pr_idle") {
+void ModelLoader::updateHeadRotation(float deltaTime, const std::string& animationName, int currentAnimationIndex) {
+    if (animationName == "combat_sword_idle" || animationName == "ui_pr_idle") {
         headRotationTimer += deltaTime;
 
         // Change head pose every 3 seconds
@@ -496,4 +490,8 @@ void ModelLoader::setBoneTransformsTBO(GLuint tbo, GLuint tboTexture) {
 
 GLuint ModelLoader::getBoneTransformsTBO() const {
     return boneTransformsTBO;
+}
+
+size_t ModelLoader::getNumBones() const {
+    return boneInfo.size();
 }
