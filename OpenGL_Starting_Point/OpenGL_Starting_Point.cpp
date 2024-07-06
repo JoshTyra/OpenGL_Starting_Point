@@ -251,7 +251,7 @@ const char* characterVertexShaderSource = R"(
     uniform vec3 viewPos;
 
     // TBO declaration
-    uniform samplerBuffer boneTransformsTBO;
+    layout(binding = 4) uniform samplerBuffer boneTransformsTBO;
 
     // Function to calculate the final bone transform
     mat4 calculateBoneTransform(ivec4 boneIDs, vec4 weights) {
@@ -324,10 +324,10 @@ const char* characterFragmentShaderSource = R"(
     uniform vec3 specularColor;
     uniform float shininess;
 
-    uniform sampler2D texture_diffuse;
-    uniform sampler2D texture_normal;
-    uniform sampler2D texture_mask;
-    uniform samplerCube cubemap;
+    layout(binding = 0) uniform sampler2D texture_diffuse;
+    layout(binding = 1) uniform sampler2D texture_normal;
+    layout(binding = 2) uniform sampler2D texture_mask;
+    layout(binding = 3) uniform samplerCube cubemap;
     uniform float lightIntensity;
 
     void main() {
@@ -950,6 +950,7 @@ void initTBO() {
 
     GLuint boneTransformsTBOTexture;
     glGenTextures(1, &boneTransformsTBOTexture);
+    glActiveTexture(GL_TEXTURE4);  // Use texture unit 4 for the TBO
     glBindTexture(GL_TEXTURE_BUFFER, boneTransformsTBOTexture);
     glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, boneTransformsTBO);
 
