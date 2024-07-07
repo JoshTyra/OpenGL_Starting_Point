@@ -34,6 +34,29 @@ float lastFrame = 0.0f; // Time of last frame
 double previousTime = 0.0;
 int frameCount = 0;
 
+// UBO structures
+struct CameraData {
+    glm::mat4 view;
+    glm::mat4 projection;
+    glm::vec3 viewPos;
+    float padding; // To ensure 16-byte alignment
+};
+
+struct LightData {
+    glm::vec3 lightDir;
+    float padding1; // To ensure 16-byte alignment
+    glm::vec3 ambientColor;
+    float padding2;
+    glm::vec3 diffuseColor;
+    float padding3;
+    glm::vec3 specularColor;
+    float lightIntensity;
+    float shininess;
+    float padding4[3]; // To ensure 16-byte alignment
+};
+
+GLuint cameraUBO, lightUBO;
+
 Camera camera(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), -180.0f, 0.0f, 6.0f, 0.1f, 45.0f);
 ModelLoader modelLoader;
 std::vector<Mesh> loadedMeshes;
@@ -137,6 +160,8 @@ void loadPlaneTexture();
 void initPlaneShaders();
 void initTBO();
 void updateNPCAnimations(float deltaTime);
+void initUBOs();
+void updateUBOs();
 
 unsigned int loadCubemap(std::vector<std::string> faces) {
     unsigned int textureID;
@@ -232,6 +257,23 @@ unsigned int loadTexture(const char* path) {
 const char* characterVertexShaderSource = R"(
     #version 430 core
 
+    layout(std140, binding = 0) uniform CameraData
+    {
+        mat4 view;
+        mat4 projection;
+        vec3 viewPos;
+    };
+
+    layout(std140, binding = 1) uniform LightData
+    {
+        vec3 lightDir;
+        vec3 ambientColor;
+        vec3 diffuseColor;
+        vec3 specularColor;
+        float lightIntensity;
+        float shininess;
+    };
+
     layout(location = 0) in vec3 aPos;
     layout(location = 1) in vec2 aTexCoord;
     layout(location = 2) in vec3 aNormal;
@@ -253,11 +295,6 @@ const char* characterVertexShaderSource = R"(
     out vec3 TangentFragPos;
     out vec3 ReflectDir;
     out vec3 InstanceColor;
-
-    uniform mat4 view;
-    uniform mat4 projection;
-    uniform vec3 lightDir;
-    uniform vec3 viewPos;
 
     layout(binding = 4) uniform samplerBuffer boneTransformsTBO;
 
@@ -316,6 +353,16 @@ const char* characterVertexShaderSource = R"(
 const char* characterFragmentShaderSource = R"(
     #version 430 core
 
+    layout(std140, binding = 1) uniform LightData
+    {
+        vec3 lightDir;
+        vec3 ambientColor;
+        vec3 diffuseColor;
+        vec3 specularColor;
+        float lightIntensity;
+        float shininess;
+    };
+
     out vec4 FragColor;
 
     in vec2 TexCoord;
@@ -325,16 +372,10 @@ const char* characterFragmentShaderSource = R"(
     in vec3 ReflectDir;
     in vec3 InstanceColor;
 
-    uniform vec3 ambientColor;
-    uniform vec3 diffuseColor;
-    uniform vec3 specularColor;
-    uniform float shininess;
-
     layout(binding = 0) uniform sampler2D texture_diffuse;
     layout(binding = 1) uniform sampler2D texture_normal;
     layout(binding = 2) uniform sampler2D texture_mask;
     layout(binding = 3) uniform samplerCube cubemap;
-    uniform float lightIntensity;
 
     void main() {
         vec3 normal = texture(texture_normal, TexCoord).rgb;
@@ -381,19 +422,25 @@ const char* characterFragmentShaderSource = R"(
 
 const char* planeVertexShaderSource = R"(
     #version 430 core
+
+    layout(std140, binding = 0) uniform CameraData
+    {
+        mat4 view;
+        mat4 projection;
+        vec3 viewPos;
+    };
+
     layout(location = 0) in vec3 aPos;
     layout(location = 1) in vec2 aTexCoord;
 
     out vec2 TexCoord;
 
     uniform mat4 model;
-    uniform mat4 view;
-    uniform mat4 projection;
 
     void main() {
         gl_Position = projection * view * model * vec4(aPos, 1.0);
         TexCoord = aTexCoord;
-    }
+}
 )";
 
 const char* planeFragmentShaderSource = R"(
@@ -589,6 +636,9 @@ int main() {
 
     // Initialize shaders
     initShaders();
+
+    // Initialize UBOs
+    initUBOs();
 
     // Initialize shaders for the plane
     initPlaneShaders();
@@ -824,8 +874,8 @@ int main() {
         glClearColor(0.2f, 0.2f, 0.3f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        projectionMatrix = camera.getProjectionMatrix(static_cast<float>(WIDTH) / static_cast<float>(HEIGHT));
-        viewMatrix = camera.getViewMatrix();
+        // Update UBOs
+        updateUBOs();
 
         // Update instance data for GPU
         for (size_t i = 0; i < npcs.size(); ++i) {
@@ -852,29 +902,9 @@ int main() {
         glBindBuffer(GL_TEXTURE_BUFFER, 0);
 
         glUseProgram(characterShaderProgram);
-        glUniformMatrix4fv(glGetUniformLocation(characterShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(viewMatrix));
-        glUniformMatrix4fv(glGetUniformLocation(characterShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projectionMatrix));
 
         // Update animation states for each NPC
         updateNPCAnimations(deltaTime);
-
-        // Set up lighting uniforms
-        glm::vec3 lightDir = glm::normalize(glm::vec3(0.3f, 1.0f, 0.5f));
-        glm::vec3 viewPos = camera.getPosition();
-        glm::vec3 ambientColor = glm::vec3(0.45f, 0.45f, 0.45f);
-        glm::vec3 diffuseColor = glm::vec3(1.0f, 1.0f, 1.0f);
-        glm::vec3 specularColor = glm::vec3(0.6f, 0.6f, 0.6f);
-        float shininess = 16.0f;
-        float lightIntensity = 1.25f;
-
-        glUniform3fv(glGetUniformLocation(characterShaderProgram, "lightDir"), 1, glm::value_ptr(lightDir));
-        glUniform3fv(glGetUniformLocation(characterShaderProgram, "viewPos"), 1, glm::value_ptr(viewPos));
-        glUniform3fv(glGetUniformLocation(characterShaderProgram, "ambientColor"), 1, glm::value_ptr(ambientColor));
-        glUniform3fv(glGetUniformLocation(characterShaderProgram, "diffuseColor"), 1, glm::value_ptr(diffuseColor));
-        glUniform3fv(glGetUniformLocation(characterShaderProgram, "specularColor"), 1, glm::value_ptr(specularColor));
-        glUniform1f(glGetUniformLocation(characterShaderProgram, "shininess"), shininess);
-        glUniform1f(glGetUniformLocation(characterShaderProgram, "lightIntensity"), lightIntensity);
-        glUniform3fv(glGetUniformLocation(characterShaderProgram, "changeColor"), 1, glm::value_ptr(currentArmorColor));
 
         // Set up textures and draw the character
         glActiveTexture(GL_TEXTURE0);
@@ -916,8 +946,6 @@ int main() {
         glUseProgram(planeShaderProgram);
         glm::mat4 planeModel = glm::mat4(1.0f);
         glUniformMatrix4fv(glGetUniformLocation(planeShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(planeModel));
-        glUniformMatrix4fv(glGetUniformLocation(planeShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(viewMatrix));
-        glUniformMatrix4fv(glGetUniformLocation(planeShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projectionMatrix));
 
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, planeTexture);
@@ -941,6 +969,8 @@ int main() {
     glDeleteVertexArrays(1, &debugVAO);
     glDeleteBuffers(1, &debugVBO);
     glDeleteProgram(debugShaderProgram);
+    glDeleteBuffers(1, &cameraUBO);
+    glDeleteBuffers(1, &lightUBO);
 
     glfwTerminate();
     return 0;
@@ -1043,6 +1073,46 @@ void updateNPCAnimations(float deltaTime) {
     }
     glBufferData(GL_TEXTURE_BUFFER, allBoneTransforms.size() * sizeof(glm::mat4), allBoneTransforms.data(), GL_DYNAMIC_DRAW);
     glBindBuffer(GL_TEXTURE_BUFFER, 0);
+}
+
+void initUBOs() {
+    // Create Camera UBO
+    glGenBuffers(1, &cameraUBO);
+    glBindBuffer(GL_UNIFORM_BUFFER, cameraUBO);
+    glBufferData(GL_UNIFORM_BUFFER, sizeof(CameraData), NULL, GL_DYNAMIC_DRAW);
+    glBindBufferBase(GL_UNIFORM_BUFFER, 0, cameraUBO);
+
+    // Create Light UBO
+    glGenBuffers(1, &lightUBO);
+    glBindBuffer(GL_UNIFORM_BUFFER, lightUBO);
+    glBufferData(GL_UNIFORM_BUFFER, sizeof(LightData), NULL, GL_DYNAMIC_DRAW);
+    glBindBufferBase(GL_UNIFORM_BUFFER, 1, lightUBO);
+}
+
+void updateUBOs() {
+    // Update Camera UBO
+    CameraData cameraData;
+    cameraData.view = camera.getViewMatrix();
+    cameraData.projection = camera.getProjectionMatrix(static_cast<float>(WIDTH) / static_cast<float>(HEIGHT));
+    cameraData.viewPos = camera.getPosition();
+
+    glBindBuffer(GL_UNIFORM_BUFFER, cameraUBO);
+    glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(CameraData), &cameraData);
+
+    // Update Light UBO
+    LightData lightData;
+    lightData.lightDir = glm::normalize(glm::vec3(0.3f, 1.0f, 0.5f));
+    lightData.ambientColor = glm::vec3(0.45f, 0.45f, 0.45f);
+    lightData.diffuseColor = glm::vec3(1.0f, 1.0f, 1.0f);
+    lightData.specularColor = glm::vec3(0.6f, 0.6f, 0.6f);
+    lightData.lightIntensity = 1.25f;
+    lightData.shininess = 16.0f;
+
+    glBindBuffer(GL_UNIFORM_BUFFER, lightUBO);
+    glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(LightData), &lightData);
+
+    // Unbind the uniform buffer
+    glBindBuffer(GL_UNIFORM_BUFFER, 0);
 }
 
 
