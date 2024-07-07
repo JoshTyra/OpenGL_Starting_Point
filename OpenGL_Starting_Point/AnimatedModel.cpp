@@ -79,7 +79,6 @@ void ModelLoader::updateBoneTransforms(float timeInSeconds, const std::string& a
 
     auto it = animations.find(animationName);
     if (it == animations.end()) {
-        //std::cout << "Animation not found: " << animationName << std::endl;
         outBoneTransforms.resize(boneInfo.size(), glm::mat4(1.0f));
         return;
     }
@@ -91,7 +90,7 @@ void ModelLoader::updateBoneTransforms(float timeInSeconds, const std::string& a
     std::vector<glm::mat4> currentBoneTransforms(boneInfo.size(), glm::mat4(1.0f));
     readNodeHierarchy(localAnimationTime, scene->mRootNode, identity, animationName, startFrame, endFrame, currentBoneTransforms);
 
-    outBoneTransforms = currentBoneTransforms;  // Directly assign the calculated transforms
+    outBoneTransforms = currentBoneTransforms;
 }
 
 const std::vector<Mesh>& ModelLoader::getLoadedMeshes() const {

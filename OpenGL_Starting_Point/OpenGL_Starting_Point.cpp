@@ -83,10 +83,17 @@ struct NPC {
     float endFrame;
     bool isRunning; // Field to track if NPC is running
 
-    NPC() : stateMachine(std::make_unique<AnimationStateMachine>()), animationTime(0.0f), startFrame(0.0f), endFrame(58.0f), isRunning(false) {}
+    // Default constructor initializes all member variables
+    NPC() : position(0.0f), modelMatrix(1.0f), color(1.0f),
+        stateMachine(std::make_unique<AnimationStateMachine>()),
+        idleTimer(0.0f), currentPathIndex(0), currentRotationAngle(0.0f),
+        currentRotationMatrix(1.0f), blendFactor(0.0f),
+        currentAnimationIndex(0), animationTime(0.0f),
+        startFrame(0.0f), endFrame(58.0f), isRunning(false) {}
 };
 
-const int numInstances = 64;
+// Set numInstances to a cube e.g., 8, 27, 64, 125
+const int numInstances = 8;
 std::vector<NPC> npcs(numInstances);
 
 // Plane geometry shit
@@ -665,41 +672,49 @@ int main() {
     originalModelMatrix = glm::scale(originalModelMatrix, glm::vec3(0.025f)); // Original scaling
 
     // Calculate safe spacing
-    int gridSide = static_cast<int>(std::sqrt(numInstances));
+    int gridSide = static_cast<int>(std::ceil(std::sqrt(numInstances)));
     float spacing = WORLD_SIZE / gridSide;
 
-    for (int i = 0; i < gridSide; ++i) {
-        for (int j = 0; j < gridSide; ++j) {
-            int idx = i * gridSide + j;
-            if (idx >= numInstances) break;
+    for (int idx = 0; idx < numInstances; ++idx) {
+        int row = idx / gridSide;
+        int col = idx % gridSide;
 
-            float x = -WORLD_SIZE / 2 + spacing * i + spacing / 2;
-            float y = 0.0f;
-            float z = -WORLD_SIZE / 2 + spacing * j + spacing / 2;
+        float x = -WORLD_SIZE / 2 + spacing * col + spacing / 2;
+        float y = 0.0f;
+        float z = -WORLD_SIZE / 2 + spacing * row + spacing / 2;
 
-            npcs[idx].position = glm::vec3(x, y, z);
-            npcs[idx].modelMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(x, y, z)) * originalModelMatrix;
-            npcs[idx].color = getRandomColor();
-            npcs[idx].stateMachine = std::make_unique<AnimationStateMachine>();
-            npcs[idx].idleTimer = 0.0f;
-            npcs[idx].currentPathIndex = 0;
-            npcs[idx].currentRotationAngle = 0.0f;
-            npcs[idx].currentRotationMatrix = glm::mat4(1.0f);
-            npcs[idx].blendFactor = 0.0f;
+        npcs[idx].position = glm::vec3(x, y, z);
+        npcs[idx].modelMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(x, y, z)) * originalModelMatrix;
+        npcs[idx].color = getRandomColor();
+        npcs[idx].stateMachine = std::make_unique<AnimationStateMachine>();
+        npcs[idx].idleTimer = 0.0f;
+        npcs[idx].currentPathIndex = 0;
+        npcs[idx].currentRotationAngle = 0.0f;
+        npcs[idx].currentRotationMatrix = glm::mat4(1.0f);
+        npcs[idx].blendFactor = 0.0f;
 
-            // Assign animations
-            if (idx % 2 == 0) {
-                // Assign idle animation to even-indexed NPCs
-                npcs[idx].startFrame = 0.0f;
-                npcs[idx].endFrame = 58.0f;
-                npcs[idx].currentAnimationIndex = 0; // Assuming index 0 is for idle
-            }
-            else {
-                // Assign running animation to odd-indexed NPCs
-                npcs[idx].startFrame = 59.0f;
-                npcs[idx].endFrame = 78.0f;
-                npcs[idx].currentAnimationIndex = 1; // Assuming index 1 is for running
-            }
+        // Assign animations with validation
+        npcs[idx].currentAnimationIndex = idx % animationNames.size();
+        if (npcs[idx].currentAnimationIndex < 0 || npcs[idx].currentAnimationIndex >= animationNames.size()) {
+            std::cerr << "Error: NPC " << idx << " has an invalid animation index: " << npcs[idx].currentAnimationIndex << std::endl;
+            npcs[idx].currentAnimationIndex = 0; // Fallback to a valid index
+        }
+
+        if (npcs[idx].currentAnimationIndex == 0) {
+            npcs[idx].startFrame = 0.0f;
+            npcs[idx].endFrame = 58.0f;
+        }
+        else if (npcs[idx].currentAnimationIndex == 1) {
+            npcs[idx].startFrame = 59.0f;
+            npcs[idx].endFrame = 78.0f;
+        }
+    }
+
+    // Ensure all NPCs are initialized
+    for (int idx = 0; idx < numInstances; ++idx) {
+        if (npcs[idx].currentAnimationIndex < 0 || npcs[idx].currentAnimationIndex >= animationNames.size()) {
+            std::cerr << "Error: NPC " << idx << " has an invalid animation index: " << npcs[idx].currentAnimationIndex << std::endl;
+            npcs[idx].currentAnimationIndex = 0; // Fallback to a valid index
         }
     }
 
@@ -720,7 +735,7 @@ int main() {
     size_t totalSize = sizeof(glm::mat4) * numInstances +
         sizeof(glm::vec3) * numInstances +
         sizeof(float) * numInstances * 3 +
-        sizeof(int) * numInstances;  // Add this line
+        sizeof(int) * numInstances;
 
     glBufferData(GL_ARRAY_BUFFER, totalSize, nullptr, GL_STATIC_DRAW);
 
@@ -821,6 +836,7 @@ int main() {
             instanceEndFrames[i] = npcs[i].endFrame;
         }
 
+        // Upload instance data to GPU
         glBindBuffer(GL_ARRAY_BUFFER, instanceVBO);
         glBufferSubData(GL_ARRAY_BUFFER, modelOffset, sizeof(glm::mat4) * numInstances, instanceModels.data());
         glBufferSubData(GL_ARRAY_BUFFER, colorOffset, sizeof(glm::vec3) * numInstances, instanceColors.data());
@@ -997,19 +1013,37 @@ void initTBO() {
     glBindBuffer(GL_TEXTURE_BUFFER, 0);
 }
 
+// Update NPC animations
 void updateNPCAnimations(float deltaTime) {
     std::vector<glm::mat4> allBoneTransforms;
+
     for (NPC& npc : npcs) {
         npc.animationTime += deltaTime;
+
+        // Check if the animation index is valid
+        if (npc.currentAnimationIndex < 0 || npc.currentAnimationIndex >= animationNames.size()) {
+            std::cerr << "Error: Invalid animation index for NPC!" << std::endl;
+            continue;
+        }
+
         std::vector<glm::mat4> npcBoneTransforms(modelLoader.getNumBones(), glm::mat4(1.0f));
         modelLoader.updateBoneTransforms(npc.animationTime, animationNames[npc.currentAnimationIndex], npc.blendFactor, npc.startFrame, npc.endFrame, npcBoneTransforms);
+
+        if (npcBoneTransforms.size() != modelLoader.getNumBones()) {
+            std::cerr << "Error: Bone transform size mismatch for NPC!" << std::endl;
+        }
+
         allBoneTransforms.insert(allBoneTransforms.end(), npcBoneTransforms.begin(), npcBoneTransforms.end());
     }
 
     // Upload all bone transforms to the TBO
     glBindBuffer(GL_TEXTURE_BUFFER, modelLoader.getBoneTransformsTBO());
+    if (allBoneTransforms.size() * sizeof(glm::mat4) > numInstances * 31 * 16 * sizeof(float)) {
+        std::cerr << "Error: Exceeded allocated buffer size for bone transforms!" << std::endl;
+    }
     glBufferData(GL_TEXTURE_BUFFER, allBoneTransforms.size() * sizeof(glm::mat4), allBoneTransforms.data(), GL_DYNAMIC_DRAW);
     glBindBuffer(GL_TEXTURE_BUFFER, 0);
 }
+
 
 
