@@ -116,7 +116,7 @@ struct NPC {
 };
 
 // Set numInstances to a cube e.g., 8, 27, 64, 125
-const int numInstances = 8;
+const int numInstances = 12;
 std::vector<NPC> npcs(numInstances);
 
 // Plane geometry shit
@@ -303,19 +303,17 @@ const char* characterVertexShaderSource = R"(
     mat4 calculateBoneTransform(ivec4 boneIDs, vec4 weights, int instanceID) {
         mat4 boneTransform = mat4(0.0);
         int boneOffset = instanceID * NUM_BONES * 4;
-
+    
         for (int i = 0; i < 4; ++i) {
             if (weights[i] > 0.0) {
                 int index = boneOffset + boneIDs[i] * 4;
-                if (index >= 0 && index < textureSize(boneTransformsTBO) - 3) {
-                    mat4 boneMatrix = mat4(
-                        texelFetch(boneTransformsTBO, index),
-                        texelFetch(boneTransformsTBO, index + 1),
-                        texelFetch(boneTransformsTBO, index + 2),
-                        texelFetch(boneTransformsTBO, index + 3)
-                    );
-                    boneTransform += boneMatrix * weights[i];
-                }
+                mat4 boneMatrix = mat4(
+                    texelFetch(boneTransformsTBO, index),
+                    texelFetch(boneTransformsTBO, index + 1),
+                    texelFetch(boneTransformsTBO, index + 2),
+                    texelFetch(boneTransformsTBO, index + 3)
+                );
+                boneTransform += boneMatrix * weights[i];
             }
         }
 
