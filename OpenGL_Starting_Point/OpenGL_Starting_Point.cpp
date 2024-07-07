@@ -412,7 +412,7 @@ const char* characterFragmentShaderSource = R"(
 
         vec3 reflectedColor = texture(cubemap, ReflectDir).rgb;
         reflectedColor *= specularMask;
-        color = mix(color, reflectedColor, 0.35f);
+        color = mix(color, reflectedColor, 0.3f);
 
         FragColor = vec4(color, alphaValue);
     }
@@ -1100,10 +1100,10 @@ void updateUBOs() {
     // Update Light UBO
     LightData lightData;
     lightData.lightDir = glm::normalize(glm::vec3(0.3f, 1.0f, 0.5f));
-    lightData.ambientColor = glm::vec3(0.45f, 0.45f, 0.45f);
+    lightData.ambientColor = glm::vec3(0.4f, 0.4f, 0.4f);
     lightData.diffuseColor = glm::vec3(1.0f, 1.0f, 1.0f);
-    lightData.specularColor = glm::vec3(0.6f, 0.6f, 0.6f);
-    lightData.lightIntensity = 1.25f;
+    lightData.specularColor = glm::vec3(0.65f, 0.65f, 0.65f);
+    lightData.lightIntensity = 1.0f;
     lightData.shininess = 16.0f;
 
     glBindBuffer(GL_UNIFORM_BUFFER, lightUBO);
