@@ -459,17 +459,17 @@ const char* visorFragmentShaderSource = R"(
         vec3 ambient = ambientColor * diffuseTexColor;
 
         vec3 lightDir = normalize(TangentLightDir);
-        float diff = max(dot(normal, lightDir), 0.0f) * lightIntensity;
+        float diff = max(dot(normal, lightDir), 0.0f);
         vec3 diffuse = diffuseColor * diff * diffuseTexColor;
 
         vec3 viewDir = normalize(TangentViewPos - TangentFragPos);
         vec3 halfwayDir = normalize(lightDir + viewDir);
-        float spec = pow(max(dot(normal, halfwayDir), 0.0), shininess) * lightIntensity;
+        float spec = pow(max(dot(normal, halfwayDir), 0.0), shininess)l
         vec3 specular = specularColor * spec * specularMask;
 
-        float fresnelBias = 0.1f;
-        float fresnelScale = 1.0f;
-        float fresnelPower = 1.0f;
+        float fresnelBias = 0.04f; // Lower bias for more metallic look
+        float fresnelScale = 0.5f;
+        float fresnelPower = 0.5f; // Increased power for sharper effect
         vec3 I = normalize(TangentFragPos - TangentViewPos);
         float fresnel = fresnelBias + fresnelScale * pow(1.0f - dot(I, normal), fresnelPower);
         specular *= fresnel;
@@ -477,8 +477,17 @@ const char* visorFragmentShaderSource = R"(
         vec3 color = ambient + diffuse + specular;
 
         vec3 reflectedColor = texture(visorCubemap, ReflectDir).rgb;
-        reflectedColor *= specularMask * 1.5f;
-        color = mix(color, reflectedColor, 0.3f);
+        reflectedColor *= specularMask;
+
+        // Adjusted Fresnel effect for reflections
+        float reflectionFresnelFactor = pow(1.0 - max(dot(viewDir, normal), 0.0), 0.8);
+        reflectionFresnelFactor = mix(0.1, 1.0, reflectionFresnelFactor); // Adjusted range for better visibility
+
+        // Blend the original color and the reflected color
+        color = mix(color, reflectedColor, reflectionFresnelFactor);
+
+        // Balance the specular highlights for a more metallic look
+        color += specular; // Adjusted influence
 
         FragColor = vec4(color, alphaValue);
     }
