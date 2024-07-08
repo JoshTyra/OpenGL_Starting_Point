@@ -464,7 +464,7 @@ const char* visorFragmentShaderSource = R"(
 
         vec3 viewDir = normalize(TangentViewPos - TangentFragPos);
         vec3 halfwayDir = normalize(lightDir + viewDir);
-        float spec = pow(max(dot(normal, halfwayDir), 0.0), shininess)l
+        float spec = pow(max(dot(normal, halfwayDir), 0.0), shininess);
         vec3 specular = specularColor * spec * specularMask;
 
         float fresnelBias = 0.04f; // Lower bias for more metallic look
