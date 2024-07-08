@@ -65,6 +65,7 @@ glm::mat4 projectionMatrix;
 glm::mat4 viewMatrix;
 
 unsigned int characterShaderProgram;
+unsigned int visorShaderProgram;
 unsigned int characterTexture;
 unsigned int characterNormalMap;
 unsigned int cubemapTexture;
@@ -411,7 +412,72 @@ const char* characterFragmentShaderSource = R"(
         vec3 color = ambient + diffuse + specular;
 
         vec3 reflectedColor = texture(cubemap, ReflectDir).rgb;
-        reflectedColor *= specularMask;
+        reflectedColor *= specularMask * 1.25f;
+        color = mix(color, reflectedColor, 0.3f);
+
+        FragColor = vec4(color, alphaValue);
+    }
+)";
+
+const char* visorFragmentShaderSource = R"(
+    #version 430 core
+
+    layout(std140, binding = 1) uniform LightData
+    {
+        vec3 lightDir;
+        vec3 ambientColor;
+        vec3 diffuseColor;
+        vec3 specularColor;
+        float lightIntensity;
+        float shininess;
+    };
+
+    out vec4 FragColor;
+
+    in vec2 TexCoord;
+    in vec3 TangentLightDir;
+    in vec3 TangentViewPos;
+    in vec3 TangentFragPos;
+    in vec3 ReflectDir;
+
+    layout(binding = 0) uniform sampler2D texture_diffuse;
+    layout(binding = 1) uniform sampler2D texture_normal;
+    layout(binding = 3) uniform samplerCube visorCubemap;
+
+    void main() {
+        vec3 normal = texture(texture_normal, TexCoord).rgb;
+        normal = normal * 2.0f - 1.0f;
+        normal.y = -normal.y;
+        normal = normalize(normal);
+
+        vec4 diffuseTexture = texture(texture_diffuse, TexCoord);
+        vec3 diffuseTexColor = diffuseTexture.rgb;
+        float alphaValue = diffuseTexture.a;
+
+        float specularMask = diffuseTexture.a;
+
+        vec3 ambient = ambientColor * diffuseTexColor;
+
+        vec3 lightDir = normalize(TangentLightDir);
+        float diff = max(dot(normal, lightDir), 0.0f) * lightIntensity;
+        vec3 diffuse = diffuseColor * diff * diffuseTexColor;
+
+        vec3 viewDir = normalize(TangentViewPos - TangentFragPos);
+        vec3 halfwayDir = normalize(lightDir + viewDir);
+        float spec = pow(max(dot(normal, halfwayDir), 0.0), shininess) * lightIntensity;
+        vec3 specular = specularColor * spec * specularMask;
+
+        float fresnelBias = 0.1f;
+        float fresnelScale = 1.0f;
+        float fresnelPower = 1.0f;
+        vec3 I = normalize(TangentFragPos - TangentViewPos);
+        float fresnel = fresnelBias + fresnelScale * pow(1.0f - dot(I, normal), fresnelPower);
+        specular *= fresnel;
+
+        vec3 color = ambient + diffuse + specular;
+
+        vec3 reflectedColor = texture(visorCubemap, ReflectDir).rgb;
+        reflectedColor *= specularMask * 1.5f;
         color = mix(color, reflectedColor, 0.3f);
 
         FragColor = vec4(color, alphaValue);
@@ -506,6 +572,12 @@ void initShaders() {
 
     glDeleteShader(debugVertexShader);
     glDeleteShader(debugFragmentShader);
+
+    // Compile and link visor fragment shader with character vertex shader
+    unsigned int visorFragmentShader = compileShader(GL_FRAGMENT_SHADER, visorFragmentShaderSource);
+    visorShaderProgram = createShaderProgram(characterVertexShader, visorFragmentShader);
+
+    glDeleteShader(visorFragmentShader);
 }
 
 glm::vec3 hexToRGB(const std::string& hex) {
@@ -869,7 +941,7 @@ int main() {
         if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
             glfwSetWindowShouldClose(window, true);
 
-        glClearColor(0.2f, 0.2f, 0.3f, 1.0f);
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         // Update UBOs
@@ -926,14 +998,16 @@ int main() {
 
         for (const auto& mesh : loadedMeshes) {
             if (mesh.meshBufferIndex == 0) {
+                glUseProgram(characterShaderProgram);
                 glActiveTexture(GL_TEXTURE3);
                 glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture);
                 glUniform1i(glGetUniformLocation(characterShaderProgram, "cubemap"), 3);
             }
             else if (mesh.meshBufferIndex == 1) {
+                glUseProgram(visorShaderProgram); // Use the visor shader for the visor part
                 glActiveTexture(GL_TEXTURE3);
                 glBindTexture(GL_TEXTURE_CUBE_MAP, visorCubemapTexture);
-                glUniform1i(glGetUniformLocation(characterShaderProgram, "cubemap"), 3);
+                glUniform1i(glGetUniformLocation(visorShaderProgram, "visorCubemap"), 3);
             }
 
             glBindVertexArray(mesh.VAO);
@@ -964,6 +1038,7 @@ int main() {
         glDeleteBuffers(1, &mesh.EBO);
     }
     glDeleteProgram(characterShaderProgram);
+    glDeleteProgram(visorShaderProgram);
     glDeleteVertexArrays(1, &debugVAO);
     glDeleteBuffers(1, &debugVBO);
     glDeleteProgram(debugShaderProgram);
@@ -1100,11 +1175,11 @@ void updateUBOs() {
     // Update Light UBO
     LightData lightData;
     lightData.lightDir = glm::normalize(glm::vec3(0.3f, 1.0f, 0.5f));
-    lightData.ambientColor = glm::vec3(0.4f, 0.4f, 0.4f);
+    lightData.ambientColor = glm::vec3(0.45f, 0.45f, 0.45f);
     lightData.diffuseColor = glm::vec3(1.0f, 1.0f, 1.0f);
-    lightData.specularColor = glm::vec3(0.65f, 0.65f, 0.65f);
+    lightData.specularColor = glm::vec3(0.6f, 0.6f, 0.6f);
     lightData.lightIntensity = 1.0f;
-    lightData.shininess = 16.0f;
+    lightData.shininess = 32.0f;
 
     glBindBuffer(GL_UNIFORM_BUFFER, lightUBO);
     glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(LightData), &lightData);
