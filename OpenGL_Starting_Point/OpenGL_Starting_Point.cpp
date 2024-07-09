@@ -22,6 +22,9 @@
 #include <queue>
 #include <unordered_set>
 #include <cmath>
+#include "imgui.h"
+#include "backends/imgui_impl_glfw.h"
+#include "backends/imgui_impl_opengl3.h"
 
 // Constants and global variables
 const int WIDTH = 2560;
@@ -33,6 +36,13 @@ float deltaTime = 0.0f; // Time between current frame and last frame
 float lastFrame = 0.0f; // Time of last frame
 double previousTime = 0.0;
 int frameCount = 0;
+
+// Single directional light
+glm::vec3 lightDir = glm::normalize(glm::vec3(0.716f, 0.325f, 0.618f));
+glm::vec3 originalLightDir = glm::vec3(0.3f, 1.0f, 0.5f);
+
+// Add a flag to keep track of mouse control state
+bool mouseControlEnabled = true;
 
 // UBO structures
 struct CameraData {
@@ -162,7 +172,8 @@ void initPlaneShaders();
 void initTBO();
 void updateNPCAnimations(float deltaTime);
 void initUBOs();
-void updateUBOs();
+void updateUBOs(const glm::vec3& lightDir);
+void setupImGui(GLFWwindow* window);
 
 unsigned int loadCubemap(std::vector<std::string> faces) {
     unsigned int textureID;
@@ -294,7 +305,6 @@ const char* characterVertexShaderSource = R"(
     out vec3 TangentLightDir;
     out vec3 TangentViewPos;
     out vec3 TangentFragPos;
-    out vec3 ReflectDir;
     out vec3 InstanceColor;
 
     layout(binding = 4) uniform samplerBuffer boneTransformsTBO;
@@ -345,7 +355,6 @@ const char* characterVertexShaderSource = R"(
         TangentViewPos = TBN * viewPos;
         TangentFragPos = TBN * FragPos;
         vec3 viewDir = normalize(viewPos - FragPos);
-        ReflectDir = reflect(-viewDir, N);
     }
 )";
 
@@ -365,10 +374,10 @@ const char* characterFragmentShaderSource = R"(
     out vec4 FragColor;
 
     in vec2 TexCoord;
+    in vec3 FragPos;
     in vec3 TangentLightDir;
     in vec3 TangentViewPos;
     in vec3 TangentFragPos;
-    in vec3 ReflectDir;
     in vec3 InstanceColor;
 
     layout(binding = 0) uniform sampler2D texture_diffuse;
@@ -377,11 +386,13 @@ const char* characterFragmentShaderSource = R"(
     layout(binding = 3) uniform samplerCube cubemap;
 
     void main() {
+        // Normal mapping
         vec3 normal = texture(texture_normal, TexCoord).rgb;
         normal = normal * 2.0f - 1.0f;
         normal.y = -normal.y;
         normal = normalize(normal);
 
+        // Diffuse texture and instance color blending
         vec4 diffuseTexture = texture(texture_diffuse, TexCoord);
         vec3 diffuseTexColor = diffuseTexture.rgb;
         float alphaValue = diffuseTexture.a;
@@ -391,17 +402,21 @@ const char* characterFragmentShaderSource = R"(
 
         float specularMask = diffuseTexture.a;
 
+        // Ambient lighting
         vec3 ambient = ambientColor * blendedColor;
 
+        // Diffuse lighting
         vec3 lightDir = normalize(TangentLightDir);
         float diff = max(dot(normal, lightDir), 0.0f) * lightIntensity;
         vec3 diffuse = diffuseColor * diff * blendedColor;
 
+        // Specular lighting
         vec3 viewDir = normalize(TangentViewPos - TangentFragPos);
         vec3 halfwayDir = normalize(lightDir + viewDir);
         float spec = pow(max(dot(normal, halfwayDir), 0.0), shininess) * lightIntensity;
         vec3 specular = specularColor * spec * specularMask;
 
+        // Fresnel effect
         float fresnelBias = 0.1f;
         float fresnelScale = 1.0f;
         float fresnelPower = 1.0f;
@@ -409,9 +424,12 @@ const char* characterFragmentShaderSource = R"(
         float fresnel = fresnelBias + fresnelScale * pow(1.0f - dot(I, normal), fresnelPower);
         specular *= fresnel;
 
+        // Combine lighting components
         vec3 color = ambient + diffuse + specular;
 
-        vec3 reflectedColor = texture(cubemap, ReflectDir).rgb;
+        // Reflection (Method 1)
+        vec3 reflectDir = reflect(I, normal);
+        vec3 reflectedColor = texture(cubemap, reflectDir).rgb;
         reflectedColor *= specularMask * 1.25f;
         color = mix(color, reflectedColor, 0.3f);
 
@@ -421,7 +439,6 @@ const char* characterFragmentShaderSource = R"(
 
 const char* visorFragmentShaderSource = R"(
     #version 430 core
-
     layout(std140, binding = 1) uniform LightData
     {
         vec3 lightDir;
@@ -431,65 +448,46 @@ const char* visorFragmentShaderSource = R"(
         float lightIntensity;
         float shininess;
     };
-
     out vec4 FragColor;
-
     in vec2 TexCoord;
     in vec3 TangentLightDir;
     in vec3 TangentViewPos;
     in vec3 TangentFragPos;
-    in vec3 ReflectDir;
-
     layout(binding = 0) uniform sampler2D texture_diffuse;
     layout(binding = 1) uniform sampler2D texture_normal;
     layout(binding = 3) uniform samplerCube visorCubemap;
-
     void main() {
+        // Normal mapping
         vec3 normal = texture(texture_normal, TexCoord).rgb;
-        normal = normal * 2.0f - 1.0f;
         normal.y = -normal.y;
-        normal = normalize(normal);
+        normal = normalize(normal * 2.0 - 1.0);
 
+        // Diffuse texture
         vec4 diffuseTexture = texture(texture_diffuse, TexCoord);
-        vec3 diffuseTexColor = diffuseTexture.rgb;
-        float alphaValue = diffuseTexture.a;
+        vec3 diffuseColor = diffuseTexture.rgb;
+        float alpha = diffuseTexture.a;
 
-        float specularMask = diffuseTexture.a;
-
-        vec3 ambient = ambientColor * diffuseTexColor;
-
+        // Basic lighting
         vec3 lightDir = normalize(TangentLightDir);
-        float diff = max(dot(normal, lightDir), 0.0f);
-        vec3 diffuse = diffuseColor * diff * diffuseTexColor;
+        float diff = max(dot(normal, lightDir), 0.0) * lightIntensity;
+        vec3 ambient = ambientColor * diffuseColor;
+        vec3 diffuse = diffuseColor * diff;
 
+        // Specular lighting
         vec3 viewDir = normalize(TangentViewPos - TangentFragPos);
         vec3 halfwayDir = normalize(lightDir + viewDir);
         float spec = pow(max(dot(normal, halfwayDir), 0.0), shininess);
-        vec3 specular = specularColor * spec * specularMask;
+        vec3 specular = specularColor * spec * alpha;
 
-        float fresnelBias = 0.04f; // Lower bias for more metallic look
-        float fresnelScale = 0.5f;
-        float fresnelPower = 0.5f; // Increased power for sharper effect
+        // Reflection (Method 1)
         vec3 I = normalize(TangentFragPos - TangentViewPos);
-        float fresnel = fresnelBias + fresnelScale * pow(1.0f - dot(I, normal), fresnelPower);
-        specular *= fresnel;
+        vec3 reflectDir = reflect(I, normal);
+        vec3 reflectedColor = texture(visorCubemap, reflectDir).rgb;
 
-        vec3 color = ambient + diffuse + specular;
+        // Combine colors
+        vec3 finalColor = ambient + diffuse + specular + reflectedColor * (alpha * 0.5f);
 
-        vec3 reflectedColor = texture(visorCubemap, ReflectDir).rgb;
-        reflectedColor *= specularMask;
-
-        // Adjusted Fresnel effect for reflections
-        float reflectionFresnelFactor = pow(1.0 - max(dot(viewDir, normal), 0.0), 0.8);
-        reflectionFresnelFactor = mix(0.1, 1.0, reflectionFresnelFactor); // Adjusted range for better visibility
-
-        // Blend the original color and the reflected color
-        color = mix(color, reflectedColor, reflectionFresnelFactor);
-
-        // Balance the specular highlights for a more metallic look
-        color += specular; // Adjusted influence
-
-        FragColor = vec4(color, alphaValue);
+        FragColor = vec4(finalColor, alpha);
     }
 )";
 
@@ -641,6 +639,22 @@ void processInput(GLFWwindow* window) {
     if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
         camera.processKeyboardInput(GLFW_KEY_D, deltaTime);
 
+    // Toggle mouse control with the "M" key
+    static bool mKeyPressed = false;
+    if (glfwGetKey(window, GLFW_KEY_M) == GLFW_PRESS && !mKeyPressed) {
+        mKeyPressed = true;
+        mouseControlEnabled = !mouseControlEnabled; // Toggle mouse control state
+        if (mouseControlEnabled) {
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+        }
+        else {
+            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+        }
+    }
+    if (glfwGetKey(window, GLFW_KEY_M) == GLFW_RELEASE) {
+        mKeyPressed = false;
+    }
+
     // Check for the "C" key press to change armor color
     static bool cKeyPressed = false;
     if (glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS && !cKeyPressed) {
@@ -653,6 +667,10 @@ void processInput(GLFWwindow* window) {
 }
 
 void mouseCallback(GLFWwindow* window, double xpos, double ypos) {
+    if (!mouseControlEnabled) {
+        return; // Do not process mouse movement if mouse control is disabled
+    }
+
     if (firstMouse) {
         lastX = xpos;
         lastY = ypos;
@@ -681,7 +699,7 @@ int main() {
 
     // Create a GLFW window
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 4);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     GLFWwindow* window = glfwCreateWindow(WIDTH, HEIGHT, "OpenGL Basic Application", nullptr, nullptr);
     if (!window) {
@@ -692,7 +710,7 @@ int main() {
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1); // Enable VSync to cap frame rate to monitor's refresh rate
     glfwSetCursorPosCallback(window, mouseCallback);
-    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
 
     // Set the window size and iconify callbacks
     glfwSetFramebufferSizeCallback(window, framebufferSizeCallback);
@@ -707,6 +725,8 @@ int main() {
 
     // Define the viewport dimensions
     glViewport(0, 0, WIDTH, HEIGHT);
+
+    setupImGui(window);
 
     // Initialize TBO
     initTBO();
@@ -953,8 +973,25 @@ int main() {
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+        // Start the ImGui frame
+        ImGui_ImplOpenGL3_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
+
+        // Set ImGui window position and size
+        ImGui::SetNextWindowPos(ImVec2(0, 10), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(150, 150), ImGuiCond_FirstUseEver); // Adjusted window size
+
+        // ImGui controls for light direction
+        ImGui::Begin("Light Controls");
+        ImGui::Text("Original Light Direction: (%.3f, %.3f, %.3f)", originalLightDir.x, originalLightDir.y, originalLightDir.z);
+        ImGui::SliderFloat3("Light Direction", glm::value_ptr(lightDir), -1.0f, 1.0f);
+        lightDir = glm::normalize(lightDir); // Normalize the direction to ensure it's a unit vector
+        ImGui::Text("Normalized Light Direction: (%.3f, %.3f, %.3f)", lightDir.x, lightDir.y, lightDir.z);
+        ImGui::End();
+
         // Update UBOs
-        updateUBOs();
+        updateUBOs(lightDir);
 
         // Update instance data for GPU
         for (size_t i = 0; i < npcs.size(); ++i) {
@@ -1036,9 +1073,18 @@ int main() {
         glDrawArrays(GL_TRIANGLES, 0, 6);
         glBindVertexArray(0);
 
+        // Render ImGui
+        ImGui::Render();
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
+
+    // Cleanup ImGui
+    ImGui_ImplOpenGL3_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext();
 
     // Clean up
     for (const auto& mesh : loadedMeshes) {
@@ -1171,7 +1217,7 @@ void initUBOs() {
     glBindBufferBase(GL_UNIFORM_BUFFER, 1, lightUBO);
 }
 
-void updateUBOs() {
+void updateUBOs(const glm::vec3& lightDir) {
     // Update Camera UBO
     CameraData cameraData;
     cameraData.view = camera.getViewMatrix();
@@ -1183,7 +1229,7 @@ void updateUBOs() {
 
     // Update Light UBO
     LightData lightData;
-    lightData.lightDir = glm::normalize(glm::vec3(0.3f, 1.0f, 0.5f));
+    lightData.lightDir = lightDir;
     lightData.ambientColor = glm::vec3(0.45f, 0.45f, 0.45f);
     lightData.diffuseColor = glm::vec3(1.0f, 1.0f, 1.0f);
     lightData.specularColor = glm::vec3(0.6f, 0.6f, 0.6f);
@@ -1196,6 +1242,20 @@ void updateUBOs() {
     // Unbind the uniform buffer
     glBindBuffer(GL_UNIFORM_BUFFER, 0);
 }
+
+void setupImGui(GLFWwindow* window) {
+    // Initialize ImGui context
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO(); (void)io;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;  // Enable Keyboard Controls
+    ImGui::StyleColorsDark();
+
+    // Initialize ImGui for GLFW and OpenGL
+    ImGui_ImplGlfw_InitForOpenGL(window, true);
+    ImGui_ImplOpenGL3_Init("#version 430");
+}
+
 
 
 
