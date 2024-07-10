@@ -305,6 +305,7 @@ const char* characterVertexShaderSource = R"(
     out vec3 TangentLightDir;
     out vec3 TangentViewPos;
     out vec3 TangentFragPos;
+    out vec3 TangentViewDir;
     out vec3 InstanceColor;
 
     layout(binding = 4) uniform samplerBuffer boneTransformsTBO;
@@ -314,7 +315,7 @@ const char* characterVertexShaderSource = R"(
     mat4 calculateBoneTransform(ivec4 boneIDs, vec4 weights, int instanceID) {
         mat4 boneTransform = mat4(0.0);
         int boneOffset = instanceID * NUM_BONES * 4;
-    
+
         for (int i = 0; i < 4; ++i) {
             if (weights[i] > 0.0) {
                 int index = boneOffset + boneIDs[i] * 4;
@@ -324,6 +325,7 @@ const char* characterVertexShaderSource = R"(
                     texelFetch(boneTransformsTBO, index + 2),
                     texelFetch(boneTransformsTBO, index + 3)
                 );
+
                 boneTransform += boneMatrix * weights[i];
             }
         }
@@ -354,7 +356,7 @@ const char* characterVertexShaderSource = R"(
         TangentLightDir = TBN * lightDir;
         TangentViewPos = TBN * viewPos;
         TangentFragPos = TBN * FragPos;
-        vec3 viewDir = normalize(viewPos - FragPos);
+        TangentViewDir = TBN * (viewPos - FragPos); // Transform view direction to tangent space
     }
 )";
 
@@ -374,10 +376,10 @@ const char* characterFragmentShaderSource = R"(
     out vec4 FragColor;
 
     in vec2 TexCoord;
-    in vec3 FragPos;
     in vec3 TangentLightDir;
     in vec3 TangentViewPos;
     in vec3 TangentFragPos;
+    in vec3 TangentViewDir;
     in vec3 InstanceColor;
 
     layout(binding = 0) uniform sampler2D texture_diffuse;
@@ -386,13 +388,10 @@ const char* characterFragmentShaderSource = R"(
     layout(binding = 3) uniform samplerCube cubemap;
 
     void main() {
-        // Normal mapping
-        vec3 normal = texture(texture_normal, TexCoord).rgb;
-        normal = normal * 2.0f - 1.0f;
+        vec3 normal = texture(texture_normal, TexCoord).rgb * 2.0 - 1.0;
         normal.y = -normal.y;
         normal = normalize(normal);
 
-        // Diffuse texture and instance color blending
         vec4 diffuseTexture = texture(texture_diffuse, TexCoord);
         vec3 diffuseTexColor = diffuseTexture.rgb;
         float alphaValue = diffuseTexture.a;
@@ -402,36 +401,32 @@ const char* characterFragmentShaderSource = R"(
 
         float specularMask = diffuseTexture.a;
 
-        // Ambient lighting
         vec3 ambient = ambientColor * blendedColor;
 
-        // Diffuse lighting
         vec3 lightDir = normalize(TangentLightDir);
         float diff = max(dot(normal, lightDir), 0.0f) * lightIntensity;
         vec3 diffuse = diffuseColor * diff * blendedColor;
 
-        // Specular lighting
-        vec3 viewDir = normalize(TangentViewPos - TangentFragPos);
+        vec3 viewDir = normalize(TangentViewDir);
         vec3 halfwayDir = normalize(lightDir + viewDir);
         float spec = pow(max(dot(normal, halfwayDir), 0.0), shininess) * lightIntensity;
-        vec3 specular = specularColor * spec * specularMask;
 
-        // Fresnel effect
-        float fresnelBias = 0.1f;
-        float fresnelScale = 1.0f;
-        float fresnelPower = 1.0f;
-        vec3 I = normalize(TangentFragPos - TangentViewPos);
-        float fresnel = fresnelBias + fresnelScale * pow(1.0f - dot(I, normal), fresnelPower);
+        // Increase the influence of the specular component
+        float specularInfluence = 2.5; // Adjust this value to increase/decrease specular influence
+        vec3 specular = specularColor * spec * specularInfluence * specularMask;
+
+        float fresnelBias = 0.2f; // Increase this value for a stronger base effect
+        float fresnelScale = 2.0f; // Increase this value to enhance the contrast
+        float fresnelPower = 0.3f; // Decrease this value for a smoother transition
+        float fresnel = fresnelBias + fresnelScale * pow(1.0f - dot(viewDir, normal), fresnelPower);
         specular *= fresnel;
 
-        // Combine lighting components
         vec3 color = ambient + diffuse + specular;
 
-        // Reflection (Method 1)
-        vec3 reflectDir = reflect(I, normal);
-        vec3 reflectedColor = texture(cubemap, reflectDir).rgb;
-        reflectedColor *= specularMask * 1.25f;
-        color = mix(color, reflectedColor, 0.3f);
+        vec3 reflectedDir = reflect(-viewDir, normal); // Reflect view direction in tangent space
+        vec3 reflectedColor = texture(cubemap, reflectedDir).rgb;
+        reflectedColor *= specularMask;
+        color = mix(color, reflectedColor, 0.4f);
 
         FragColor = vec4(color, alphaValue);
     }
@@ -439,6 +434,7 @@ const char* characterFragmentShaderSource = R"(
 
 const char* visorFragmentShaderSource = R"(
     #version 430 core
+
     layout(std140, binding = 1) uniform LightData
     {
         vec3 lightDir;
@@ -448,46 +444,67 @@ const char* visorFragmentShaderSource = R"(
         float lightIntensity;
         float shininess;
     };
+
     out vec4 FragColor;
+
     in vec2 TexCoord;
     in vec3 TangentLightDir;
     in vec3 TangentViewPos;
     in vec3 TangentFragPos;
+    in vec3 TangentViewDir;
+
     layout(binding = 0) uniform sampler2D texture_diffuse;
     layout(binding = 1) uniform sampler2D texture_normal;
     layout(binding = 3) uniform samplerCube visorCubemap;
+
     void main() {
-        // Normal mapping
-        vec3 normal = texture(texture_normal, TexCoord).rgb;
+        vec3 normal = texture(texture_normal, TexCoord).rgb * 2.0 - 1.0;
         normal.y = -normal.y;
-        normal = normalize(normal * 2.0 - 1.0);
+        normal = normalize(normal);
 
-        // Diffuse texture
         vec4 diffuseTexture = texture(texture_diffuse, TexCoord);
-        vec3 diffuseColor = diffuseTexture.rgb;
-        float alpha = diffuseTexture.a;
+        vec3 diffuseTexColor = diffuseTexture.rgb;
+        float alphaValue = diffuseTexture.a;
+        float specularMask = diffuseTexture.a;
 
-        // Basic lighting
+        vec3 ambient = ambientColor * diffuseTexColor;
+
         vec3 lightDir = normalize(TangentLightDir);
-        float diff = max(dot(normal, lightDir), 0.0) * lightIntensity;
-        vec3 ambient = ambientColor * diffuseColor;
-        vec3 diffuse = diffuseColor * diff;
+        float diff = max(dot(normal, lightDir), 0.0f);
+        vec3 diffuse = diffuseColor * diff * diffuseTexColor;
 
-        // Specular lighting
-        vec3 viewDir = normalize(TangentViewPos - TangentFragPos);
+        vec3 viewDir = normalize(TangentViewDir);
         vec3 halfwayDir = normalize(lightDir + viewDir);
         float spec = pow(max(dot(normal, halfwayDir), 0.0), shininess);
-        vec3 specular = specularColor * spec * alpha;
+        vec3 specular = specularColor * spec * specularMask;
 
-        // Reflection (Method 1)
-        vec3 I = normalize(TangentFragPos - TangentViewPos);
-        vec3 reflectDir = reflect(I, normal);
-        vec3 reflectedColor = texture(visorCubemap, reflectDir).rgb;
+        // Increase the influence of the specular component
+        float specularInfluence = 2.0; // Adjust this value to increase/decrease specular influence
+        specular *= specularInfluence;
 
-        // Combine colors
-        vec3 finalColor = ambient + diffuse + specular + reflectedColor * (alpha * 0.5f);
+        float fresnelBias = 0.1f; // Increased bias for more reflection
+        float fresnelScale = 1.0f;
+        float fresnelPower = 2.0f; // Increased power for sharper effect
+        float fresnel = fresnelBias + fresnelScale * pow(1.0f - dot(viewDir, normal), fresnelPower);
+        specular *= fresnel;
 
-        FragColor = vec4(finalColor, alpha);
+        vec3 color = ambient + diffuse + specular;
+
+        // Reflection calculation in tangent space
+        vec3 reflectedDir = reflect(-viewDir, normal); // Reflect view direction in tangent space
+        vec3 reflectedColor = texture(visorCubemap, reflectedDir).rgb;
+        reflectedColor *= specularMask;
+
+        // Adjusted Fresnel effect for reflections
+        float reflectionFresnelFactor = pow(1.0 - max(dot(viewDir, normal), 0.0), 2.0); // Increased power for more noticeable reflections
+        reflectionFresnelFactor = mix(0.35, 1.0, reflectionFresnelFactor); // Adjusted range for better visibility
+
+        // Blend the original color and the reflected color
+        color = mix(color, reflectedColor, reflectionFresnelFactor);
+
+        // Balance the specular highlights for a more metallic look
+        color += specular; // Adjusted influence
+        FragColor = vec4(color, alphaValue);
     }
 )";
 
@@ -556,13 +573,21 @@ const char* debugFragmentShaderSource = R"(
 )";
 
 void initShaders() {
-    // Compile and link character shader
+    // Compile character vertex shader
     unsigned int characterVertexShader = compileShader(GL_VERTEX_SHADER, characterVertexShaderSource);
+
+    // Compile character fragment shader
     unsigned int characterFragmentShader = compileShader(GL_FRAGMENT_SHADER, characterFragmentShaderSource);
     characterShaderProgram = createShaderProgram(characterVertexShader, characterFragmentShader);
 
+    // Compile visor fragment shader
+    unsigned int visorFragmentShader = compileShader(GL_FRAGMENT_SHADER, visorFragmentShaderSource);
+    visorShaderProgram = createShaderProgram(characterVertexShader, visorFragmentShader);
+
+    // Now we can delete the character vertex shader after it's used in both programs
     glDeleteShader(characterVertexShader);
     glDeleteShader(characterFragmentShader);
+    glDeleteShader(visorFragmentShader);
 
     // Compile and link plane shader
     unsigned int planeVertexShader = compileShader(GL_VERTEX_SHADER, planeVertexShaderSource);
@@ -579,12 +604,6 @@ void initShaders() {
 
     glDeleteShader(debugVertexShader);
     glDeleteShader(debugFragmentShader);
-
-    // Compile and link visor fragment shader with character vertex shader
-    unsigned int visorFragmentShader = compileShader(GL_FRAGMENT_SHADER, visorFragmentShaderSource);
-    visorShaderProgram = createShaderProgram(characterVertexShader, visorFragmentShader);
-
-    glDeleteShader(visorFragmentShader);
 }
 
 glm::vec3 hexToRGB(const std::string& hex) {
@@ -985,8 +1004,19 @@ int main() {
         // ImGui controls for light direction
         ImGui::Begin("Light Controls");
         ImGui::Text("Original Light Direction: (%.3f, %.3f, %.3f)", originalLightDir.x, originalLightDir.y, originalLightDir.z);
-        ImGui::SliderFloat3("Light Direction", glm::value_ptr(lightDir), -1.0f, 1.0f);
-        lightDir = glm::normalize(lightDir); // Normalize the direction to ensure it's a unit vector
+
+        // Separate sliders for each component of lightDir
+        static float lightDirX = lightDir.x;
+        static float lightDirY = lightDir.y;
+        static float lightDirZ = lightDir.z;
+
+        ImGui::SliderFloat("Light Direction X", &lightDirX, -1.0f, 1.0f);
+        ImGui::SliderFloat("Light Direction Y", &lightDirY, -1.0f, 1.0f);
+        ImGui::SliderFloat("Light Direction Z", &lightDirZ, -1.0f, 1.0f);
+
+        // Update lightDir with the new values from sliders
+        lightDir = glm::normalize(glm::vec3(lightDirX, lightDirY, lightDirZ));
+
         ImGui::Text("Normalized Light Direction: (%.3f, %.3f, %.3f)", lightDir.x, lightDir.y, lightDir.z);
         ImGui::End();
 
@@ -1230,11 +1260,11 @@ void updateUBOs(const glm::vec3& lightDir) {
     // Update Light UBO
     LightData lightData;
     lightData.lightDir = lightDir;
-    lightData.ambientColor = glm::vec3(0.45f, 0.45f, 0.45f);
+    lightData.ambientColor = glm::vec3(0.4f, 0.4f, 0.4f);
     lightData.diffuseColor = glm::vec3(1.0f, 1.0f, 1.0f);
     lightData.specularColor = glm::vec3(0.6f, 0.6f, 0.6f);
-    lightData.lightIntensity = 1.0f;
-    lightData.shininess = 32.0f;
+    lightData.lightIntensity = 1.25f;
+    lightData.shininess = 16.0f;
 
     glBindBuffer(GL_UNIFORM_BUFFER, lightUBO);
     glBufferSubData(GL_UNIFORM_BUFFER, 0, sizeof(LightData), &lightData);
