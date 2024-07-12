@@ -24,6 +24,8 @@
 #include "imgui.h"
 #include "backends/imgui_impl_glfw.h"
 #include "backends/imgui_impl_opengl3.h"
+#include <behaviortree_cpp/bt_factory.h>
+#include <behaviortree_cpp/behavior_tree.h>
 
 // Constants and global variables
 const int WIDTH = 2560;
@@ -122,6 +124,97 @@ struct NPC {
         currentAnimationIndex(0), animationTime(0.0f),
         startFrame(0.0f), endFrame(58.0f), isRunning(false) {}
 };
+
+class IdleNode : public BT::SyncActionNode {
+public:
+    IdleNode(const std::string& name, const BT::NodeConfiguration& config)
+        : BT::SyncActionNode(name, config) {}
+
+    static BT::PortsList providedPorts() {
+        return { BT::InputPort<NPC*>("npc") };
+    }
+
+    BT::NodeStatus tick() override {
+        NPC* npc = nullptr;
+        if (getInput<NPC*>("npc", npc)) {
+            if (npc != nullptr) {
+                npc->startFrame = 0.0f;
+                npc->endFrame = 58.0f;
+                return BT::NodeStatus::SUCCESS;
+            }
+        }
+        return BT::NodeStatus::FAILURE;
+    }
+};
+
+class RunningNode : public BT::SyncActionNode {
+public:
+    RunningNode(const std::string& name, const BT::NodeConfiguration& config)
+        : BT::SyncActionNode(name, config) {}
+
+    static BT::PortsList providedPorts() {
+        return { BT::InputPort<NPC*>("npc") };
+    }
+
+    BT::NodeStatus tick() override {
+        NPC* npc = nullptr;
+        if (getInput<NPC*>("npc", npc)) {
+            if (npc != nullptr) {
+                npc->startFrame = 59.0f;
+                npc->endFrame = 78.0f;
+                return BT::NodeStatus::SUCCESS;
+            }
+        }
+        return BT::NodeStatus::FAILURE;
+    }
+};
+
+class ShouldRun : public BT::ConditionNode {
+private:
+    float lastToggleTime = 0.0f;
+    const float toggleDelay = 0.3f; // 300ms delay
+
+public:
+    ShouldRun(const std::string& name, const BT::NodeConfiguration& config)
+        : BT::ConditionNode(name, config) {}
+
+    static BT::PortsList providedPorts() {
+        return { BT::InputPort<NPC*>("npc") };
+    }
+
+    BT::NodeStatus tick() override {
+        NPC* npc = nullptr;
+        if (getInput<NPC*>("npc", npc)) {
+            if (npc != nullptr) {
+                float currentTime = static_cast<float>(glfwGetTime());
+                if (glfwGetKey(glfwGetCurrentContext(), GLFW_KEY_R) == GLFW_PRESS) {
+                    if (currentTime - lastToggleTime > toggleDelay) {
+                        npc->isRunning = !npc->isRunning;
+                        lastToggleTime = currentTime;
+                    }
+                }
+                return npc->isRunning ? BT::NodeStatus::SUCCESS : BT::NodeStatus::FAILURE;
+            }
+        }
+        return BT::NodeStatus::FAILURE;
+    }
+};
+
+static const char* xml_text = R"(
+<root BTCPP_format="4">
+    <BehaviorTree ID="MainTree">
+        <Fallback name="root_fallback">
+            <Sequence name="running_sequence">
+                <ShouldRun npc="{npc}"/>
+                <Running npc="{npc}"/>
+            </Sequence>
+            <Sequence name="idle_sequence">
+                <Idle npc="{npc}"/>
+            </Sequence>
+        </Fallback>
+    </BehaviorTree>
+</root>
+ )";
 
 // Set numInstances to a cube e.g., 8, 27, 64, 125
 const int numInstances = 12;
@@ -959,6 +1052,19 @@ int main() {
         glBindVertexArray(0);
     }
 
+    // Initialize Behavior Tree Factory
+    BT::BehaviorTreeFactory factory;
+
+    // Register custom nodes
+    factory.registerNodeType<IdleNode>("Idle");
+    factory.registerNodeType<RunningNode>("Running");
+    factory.registerNodeType<ShouldRun>("ShouldRun");
+
+    // Create a blackboard
+    auto blackboard = BT::Blackboard::create();
+
+    auto tree = factory.createTreeFromText(xml_text, blackboard);
+
     // Main render loop
     while (!glfwWindowShouldClose(window)) {
         float currentFrame = static_cast<float>(glfwGetTime());
@@ -1018,6 +1124,12 @@ int main() {
 
         // Update UBOs
         updateUBOs(lightDir);
+
+        // Step 1: Process NPCs through the behavior tree 
+        for (auto& npc : npcs) {
+            blackboard->set("npc", &npc);
+            auto status = tree.tickOnce();
+        }
 
         // Update instance data for GPU
         for (size_t i = 0; i < npcs.size(); ++i) {
