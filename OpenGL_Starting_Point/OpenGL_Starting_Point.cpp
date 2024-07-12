@@ -17,7 +17,6 @@
 #include <map>
 #include <iostream>
 #include "AnimatedModel.h"
-#include "AnimationStateMachine.h"
 #include <vector>
 #include <queue>
 #include <unordered_set>
@@ -103,7 +102,6 @@ struct NPC {
     glm::vec3 position;
     glm::mat4 modelMatrix;
     glm::vec3 color;
-    std::unique_ptr<AnimationStateMachine> stateMachine;
     float idleTimer;
     std::vector<glm::vec3> currentPath;
     int currentPathIndex;
@@ -119,7 +117,6 @@ struct NPC {
 
     // Default constructor initializes all member variables
     NPC() : position(0.0f), modelMatrix(1.0f), color(1.0f),
-        stateMachine(std::make_unique<AnimationStateMachine>()),
         idleTimer(0.0f), currentPathIndex(0), currentRotationAngle(0.0f),
         currentRotationMatrix(1.0f), blendFactor(0.0f),
         currentAnimationIndex(0), animationTime(0.0f),
@@ -854,7 +851,6 @@ int main() {
         npcs[idx].position = glm::vec3(x, y, z);
         npcs[idx].modelMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(x, y, z)) * originalModelMatrix;
         npcs[idx].color = getRandomColor();
-        npcs[idx].stateMachine = std::make_unique<AnimationStateMachine>();
         npcs[idx].idleTimer = 0.0f;
         npcs[idx].currentPathIndex = 0;
         npcs[idx].currentRotationAngle = 0.0f;
