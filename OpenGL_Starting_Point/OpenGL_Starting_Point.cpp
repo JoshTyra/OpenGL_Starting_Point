@@ -24,8 +24,8 @@
 #include "imgui.h"
 #include "backends/imgui_impl_glfw.h"
 #include "backends/imgui_impl_opengl3.h"
-#include <behaviortree_cpp/bt_factory.h>
-#include <behaviortree_cpp/behavior_tree.h>
+#include "BehaviorTrees.h"
+#include "NPC.h"
 
 // Constants and global variables
 const int WIDTH = 2560;
@@ -99,126 +99,7 @@ float idleAnimationChangeTimer = 0.0f;
 const float idleAnimationChangeInterval = 2.0f; // Minimum interval between idle animation changes in seconds
 bool idleAnimationSelected = false; // Add this flag at the top of your file
 
-// Ai shit here
-struct NPC {
-    glm::vec3 position;
-    glm::mat4 modelMatrix;
-    glm::vec3 color;
-    float idleTimer;
-    std::vector<glm::vec3> currentPath;
-    int currentPathIndex;
-    glm::vec3 currentDestination;
-    float currentRotationAngle;
-    glm::mat4 currentRotationMatrix;
-    float blendFactor;
-    int currentAnimationIndex;
-    float animationTime;
-    float startFrame;
-    float endFrame;
-    bool isRunning; // Field to track if NPC is running
-
-    // Default constructor initializes all member variables
-    NPC() : position(0.0f), modelMatrix(1.0f), color(1.0f),
-        idleTimer(0.0f), currentPathIndex(0), currentRotationAngle(0.0f),
-        currentRotationMatrix(1.0f), blendFactor(0.0f),
-        currentAnimationIndex(0), animationTime(0.0f),
-        startFrame(0.0f), endFrame(58.0f), isRunning(false) {}
-};
-
-class IdleNode : public BT::SyncActionNode {
-public:
-    IdleNode(const std::string& name, const BT::NodeConfiguration& config)
-        : BT::SyncActionNode(name, config) {}
-
-    static BT::PortsList providedPorts() {
-        return { BT::InputPort<NPC*>("npc") };
-    }
-
-    BT::NodeStatus tick() override {
-        NPC* npc = nullptr;
-        if (getInput<NPC*>("npc", npc)) {
-            if (npc != nullptr) {
-                npc->startFrame = 0.0f;
-                npc->endFrame = 58.0f;
-                return BT::NodeStatus::SUCCESS;
-            }
-        }
-        return BT::NodeStatus::FAILURE;
-    }
-};
-
-class RunningNode : public BT::SyncActionNode {
-public:
-    RunningNode(const std::string& name, const BT::NodeConfiguration& config)
-        : BT::SyncActionNode(name, config) {}
-
-    static BT::PortsList providedPorts() {
-        return { BT::InputPort<NPC*>("npc") };
-    }
-
-    BT::NodeStatus tick() override {
-        NPC* npc = nullptr;
-        if (getInput<NPC*>("npc", npc)) {
-            if (npc != nullptr) {
-                npc->startFrame = 59.0f;
-                npc->endFrame = 78.0f;
-                return BT::NodeStatus::SUCCESS;
-            }
-        }
-        return BT::NodeStatus::FAILURE;
-    }
-};
-
-class ShouldRun : public BT::ConditionNode {
-private:
-    float lastToggleTime = 0.0f;
-    const float toggleDelay = 0.3f; // 300ms delay
-
-public:
-    ShouldRun(const std::string& name, const BT::NodeConfiguration& config)
-        : BT::ConditionNode(name, config) {}
-
-    static BT::PortsList providedPorts() {
-        return { BT::InputPort<NPC*>("npc") };
-    }
-
-    BT::NodeStatus tick() override {
-        NPC* npc = nullptr;
-        if (getInput<NPC*>("npc", npc)) {
-            if (npc != nullptr) {
-                float currentTime = static_cast<float>(glfwGetTime());
-                if (glfwGetKey(glfwGetCurrentContext(), GLFW_KEY_R) == GLFW_PRESS) {
-                    if (currentTime - lastToggleTime > toggleDelay) {
-                        npc->isRunning = !npc->isRunning;
-                        lastToggleTime = currentTime;
-                    }
-                }
-                return npc->isRunning ? BT::NodeStatus::SUCCESS : BT::NodeStatus::FAILURE;
-            }
-        }
-        return BT::NodeStatus::FAILURE;
-    }
-};
-
-static const char* xml_text = R"(
-<root BTCPP_format="4">
-    <BehaviorTree ID="MainTree">
-        <Fallback name="root_fallback">
-            <Sequence name="running_sequence">
-                <ShouldRun npc="{npc}"/>
-                <Running npc="{npc}"/>
-            </Sequence>
-            <Sequence name="idle_sequence">
-                <Idle npc="{npc}"/>
-            </Sequence>
-        </Fallback>
-    </BehaviorTree>
-</root>
- )";
-
-// Set numInstances to a cube e.g., 8, 27, 64, 125
-const int numInstances = 12;
-std::vector<NPC> npcs(numInstances);
+NPCManager npcManager;
 
 // Plane geometry shit
 unsigned int planeVAO, planeVBO;
@@ -264,6 +145,7 @@ void updateNPCAnimations(float deltaTime);
 void initUBOs();
 void updateUBOs(const glm::vec3& lightDir);
 void setupImGui(GLFWwindow* window);
+void initializeNPCs();
 
 unsigned int loadCubemap(std::vector<std::string> faces) {
     unsigned int textureID;
@@ -696,37 +578,6 @@ void initShaders() {
     glDeleteShader(debugFragmentShader);
 }
 
-glm::vec3 hexToRGB(const std::string& hex) {
-    int r = std::stoi(hex.substr(1, 2), nullptr, 16);
-    int g = std::stoi(hex.substr(3, 2), nullptr, 16);
-    int b = std::stoi(hex.substr(5, 2), nullptr, 16);
-    return glm::vec3(r / 255.0f, g / 255.0f, b / 255.0f);
-}
-
-std::vector<std::string> colorCodes = {
-    "#C13E3E", // Multiplayer Red
-    "#3639C9", // Multiplayer Blue
-    "#C9BA36", // Multiplayer Gold/Yellow
-    "#208A20", // Multiplayer Green
-    "#B53C8A", // Multiplayer Purple
-    "#DF9735", // Multiplayer Orange
-    "#744821", // Multiplayer Brown
-    "#EB7EC5", // Multiplayer Pink
-    "#D2D2D2", // Multiplayer White
-    "#758550", // Campaign Color Lighter
-    "#707E71", // Halo ce multiplayer gray
-    "#01FFFF", // Halo ce multiplayer cyan
-    "#6493ED", // Halo ce multiplayer cobalt
-    "#C69C6C", // Halo ce multiplayer tan
-};
-
-glm::vec3 getRandomColor() {
-    static std::random_device rd;
-    static std::mt19937 engine(rd());
-    static std::uniform_int_distribution<int> distribution(0, colorCodes.size() - 1);
-    return hexToRGB(colorCodes[distribution(engine)]);
-}
-
 // Update the character's position based on forward direction and speed
 void updateCharacterPosition(glm::vec3& position, glm::vec3& forwardDirection, float speed, float deltaTime) {
     position += forwardDirection * speed * deltaTime;
@@ -762,16 +613,6 @@ void processInput(GLFWwindow* window) {
     }
     if (glfwGetKey(window, GLFW_KEY_M) == GLFW_RELEASE) {
         mKeyPressed = false;
-    }
-
-    // Check for the "C" key press to change armor color
-    static bool cKeyPressed = false;
-    if (glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS && !cKeyPressed) {
-        cKeyPressed = true;
-        currentArmorColor = getRandomColor(); // Change the armor color
-    }
-    if (glfwGetKey(window, GLFW_KEY_C) == GLFW_RELEASE) {
-        cKeyPressed = false;
     }
 }
 
@@ -897,90 +738,27 @@ int main() {
 
     visorCubemapTexture = loadCubemap(visorfaces);
 
-    // Set the initial random color once
-    currentArmorColor = getRandomColor();
-
-    float movementSpeed = 4.5f; // Adjust the speed as needed
-    float rotationSpeed = 2.0f;
-    float currentRotationAngle = 0.0f; // Current rotation angle
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_real_distribution<float> dis(-glm::radians(30.0f), glm::radians(30.0f)); // Random angle change
-
-    camera.cameraLookAt(glm::vec3(-0.5f, 0.0f, 1.0f));
-
-    const float IDLE_DURATION = 15.0f; // 15 seconds of idle time at destination
-    const float PATH_COMPLETION_CHECK_THRESHOLD = 0.1f; // Distance threshold to consider a path point reached
-    float idleTimer = 0.0f;
-
-    // Define a blend speed multiplier
-    const float blendSpeed = 5.0f; // Increase this value to make transitions faster
-    glm::mat4 currentRotationMatrix = glm::mat4(1.0f);
-
     // Create buffers for instance data
-    std::vector<glm::mat4> instanceModels(numInstances);
-    std::vector<glm::vec3> instanceColors(numInstances);
-    std::vector<float> instanceAnimationTimes(numInstances);
-    std::vector<float> instanceStartFrames(numInstances);
-    std::vector<float> instanceEndFrames(numInstances);
-    std::vector<int> instanceIDs(numInstances);
+    std::vector<glm::mat4> instanceModels(NPCManager::MAX_NPCS);
+    std::vector<glm::vec3> instanceColors(NPCManager::MAX_NPCS);
+    std::vector<float> instanceAnimationTimes(NPCManager::MAX_NPCS);
+    std::vector<float> instanceStartFrames(NPCManager::MAX_NPCS);
+    std::vector<float> instanceEndFrames(NPCManager::MAX_NPCS);
+    std::vector<int> instanceIDs(NPCManager::MAX_NPCS);
 
     glm::mat4 originalModelMatrix = glm::mat4(1.0f);
     originalModelMatrix = glm::rotate(originalModelMatrix, glm::radians(90.0f), glm::vec3(-1.0f, 0.0f, 0.0f)); // Original rotation
     originalModelMatrix = glm::scale(originalModelMatrix, glm::vec3(0.025f)); // Original scaling
 
-    // Calculate safe spacing
-    int gridSide = static_cast<int>(std::ceil(std::sqrt(numInstances)));
-    float spacing = WORLD_SIZE / gridSide;
+    initializeNPCs();
 
-    for (int idx = 0; idx < numInstances; ++idx) {
-        int row = idx / gridSide;
-        int col = idx % gridSide;
-
-        float x = -WORLD_SIZE / 2 + spacing * col + spacing / 2;
-        float y = 0.0f;
-        float z = -WORLD_SIZE / 2 + spacing * row + spacing / 2;
-
-        npcs[idx].position = glm::vec3(x, y, z);
-        npcs[idx].modelMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(x, y, z)) * originalModelMatrix;
-        npcs[idx].color = getRandomColor();
-        npcs[idx].idleTimer = 0.0f;
-        npcs[idx].currentPathIndex = 0;
-        npcs[idx].currentRotationAngle = 0.0f;
-        npcs[idx].currentRotationMatrix = glm::mat4(1.0f);
-        npcs[idx].blendFactor = 0.0f;
-
-        // Assign animations with validation
-        npcs[idx].currentAnimationIndex = idx % animationNames.size();
-        if (npcs[idx].currentAnimationIndex < 0 || npcs[idx].currentAnimationIndex >= animationNames.size()) {
-            std::cerr << "Error: NPC " << idx << " has an invalid animation index: " << npcs[idx].currentAnimationIndex << std::endl;
-            npcs[idx].currentAnimationIndex = 0; // Fallback to a valid index
-        }
-
-        if (npcs[idx].currentAnimationIndex == 0) {
-            npcs[idx].startFrame = 0.0f;
-            npcs[idx].endFrame = 58.0f;
-        }
-        else if (npcs[idx].currentAnimationIndex == 1) {
-            npcs[idx].startFrame = 59.0f;
-            npcs[idx].endFrame = 78.0f;
-        }
-    }
-
-    // Ensure all NPCs are initialized
-    for (int idx = 0; idx < numInstances; ++idx) {
-        if (npcs[idx].currentAnimationIndex < 0 || npcs[idx].currentAnimationIndex >= animationNames.size()) {
-            std::cerr << "Error: NPC " << idx << " has an invalid animation index: " << npcs[idx].currentAnimationIndex << std::endl;
-            npcs[idx].currentAnimationIndex = 0; // Fallback to a valid index
-        }
-    }
-
+    const auto& npcs = npcManager.getNPCs();
     for (size_t i = 0; i < npcs.size(); ++i) {
-        instanceModels[i] = npcs[i].modelMatrix;
-        instanceColors[i] = npcs[i].color;
-        instanceAnimationTimes[i] = npcs[i].animationTime;
-        instanceStartFrames[i] = npcs[i].startFrame;
-        instanceEndFrames[i] = npcs[i].endFrame;
+        instanceModels[i] = npcs[i].getModelMatrix();
+        instanceColors[i] = npcs[i].getColor();
+        instanceAnimationTimes[i] = npcs[i].getAnimationTime();
+        instanceStartFrames[i] = npcs[i].getStartFrame();
+        instanceEndFrames[i] = npcs[i].getEndFrame();
         instanceIDs[i] = i;
     }
 
@@ -989,27 +767,27 @@ int main() {
     glBindBuffer(GL_ARRAY_BUFFER, instanceVBO);
 
     // Calculate the total size of all instance data
-    size_t totalSize = sizeof(glm::mat4) * numInstances +
-        sizeof(glm::vec3) * numInstances +
-        sizeof(float) * numInstances * 3 +
-        sizeof(int) * numInstances;
+    size_t totalSize = sizeof(glm::mat4) * NPCManager::MAX_NPCS +
+        sizeof(glm::vec3) * NPCManager::MAX_NPCS +
+        sizeof(float) * NPCManager::MAX_NPCS * 3 +
+        sizeof(int) * NPCManager::MAX_NPCS;
 
     glBufferData(GL_ARRAY_BUFFER, totalSize, nullptr, GL_STATIC_DRAW);
 
     // Calculate offsets for each data type
     size_t modelOffset = 0;
-    size_t colorOffset = sizeof(glm::mat4) * numInstances;
-    size_t animTimeOffset = colorOffset + sizeof(glm::vec3) * numInstances;
-    size_t startFrameOffset = animTimeOffset + sizeof(float) * numInstances;
-    size_t endFrameOffset = startFrameOffset + sizeof(float) * numInstances;
-    size_t idOffset = endFrameOffset + sizeof(float) * numInstances;  // Add this line
+    size_t colorOffset = sizeof(glm::mat4) * NPCManager::MAX_NPCS;
+    size_t animTimeOffset = colorOffset + sizeof(glm::vec3) * NPCManager::MAX_NPCS;
+    size_t startFrameOffset = animTimeOffset + sizeof(float) * NPCManager::MAX_NPCS;
+    size_t endFrameOffset = startFrameOffset + sizeof(float) * NPCManager::MAX_NPCS;
+    size_t idOffset = endFrameOffset + sizeof(float) * NPCManager::MAX_NPCS;
 
-    glBufferSubData(GL_ARRAY_BUFFER, modelOffset, sizeof(glm::mat4)* numInstances, instanceModels.data());
-    glBufferSubData(GL_ARRAY_BUFFER, colorOffset, sizeof(glm::vec3)* numInstances, instanceColors.data());
-    glBufferSubData(GL_ARRAY_BUFFER, animTimeOffset, sizeof(float)* numInstances, instanceAnimationTimes.data());
-    glBufferSubData(GL_ARRAY_BUFFER, startFrameOffset, sizeof(float)* numInstances, instanceStartFrames.data());
-    glBufferSubData(GL_ARRAY_BUFFER, endFrameOffset, sizeof(float)* numInstances, instanceEndFrames.data());
-    glBufferSubData(GL_ARRAY_BUFFER, idOffset, sizeof(int)* numInstances, instanceIDs.data());  // Add this line
+    glBufferSubData(GL_ARRAY_BUFFER, modelOffset, sizeof(glm::mat4)* NPCManager::MAX_NPCS, instanceModels.data());
+    glBufferSubData(GL_ARRAY_BUFFER, colorOffset, sizeof(glm::vec3)* NPCManager::MAX_NPCS, instanceColors.data());
+    glBufferSubData(GL_ARRAY_BUFFER, animTimeOffset, sizeof(float)* NPCManager::MAX_NPCS, instanceAnimationTimes.data());
+    glBufferSubData(GL_ARRAY_BUFFER, startFrameOffset, sizeof(float)* NPCManager::MAX_NPCS, instanceStartFrames.data());
+    glBufferSubData(GL_ARRAY_BUFFER, endFrameOffset, sizeof(float)* NPCManager::MAX_NPCS, instanceEndFrames.data());
+    glBufferSubData(GL_ARRAY_BUFFER, idOffset, sizeof(int)* NPCManager::MAX_NPCS, instanceIDs.data());  // Add this line
 
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 
@@ -1028,20 +806,20 @@ int main() {
 
         // Set instance color attribute
         glEnableVertexAttribArray(11);
-        glVertexAttribPointer(11, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), (void*)(sizeof(glm::mat4) * numInstances));
+        glVertexAttribPointer(11, 3, GL_FLOAT, GL_FALSE, sizeof(glm::vec3), (void*)(sizeof(glm::mat4) * NPCManager::MAX_NPCS));
         glVertexAttribDivisor(11, 1);
 
         // Set instance animation attributes
         glEnableVertexAttribArray(12);
-        glVertexAttribPointer(12, 1, GL_FLOAT, GL_FALSE, sizeof(float), (void*)(sizeof(glm::mat4) * numInstances + sizeof(glm::vec3) * numInstances));
+        glVertexAttribPointer(12, 1, GL_FLOAT, GL_FALSE, sizeof(float), (void*)(sizeof(glm::mat4) * NPCManager::MAX_NPCS + sizeof(glm::vec3) * NPCManager::MAX_NPCS));
         glVertexAttribDivisor(12, 1);
 
         glEnableVertexAttribArray(13);
-        glVertexAttribPointer(13, 1, GL_FLOAT, GL_FALSE, sizeof(float), (void*)(sizeof(glm::mat4) * numInstances + sizeof(glm::vec3) * numInstances + sizeof(float) * numInstances));
+        glVertexAttribPointer(13, 1, GL_FLOAT, GL_FALSE, sizeof(float), (void*)(sizeof(glm::mat4) * NPCManager::MAX_NPCS + sizeof(glm::vec3) * NPCManager::MAX_NPCS + sizeof(float) * NPCManager::MAX_NPCS));
         glVertexAttribDivisor(13, 1);
 
         glEnableVertexAttribArray(14);
-        glVertexAttribPointer(14, 1, GL_FLOAT, GL_FALSE, sizeof(float), (void*)(sizeof(glm::mat4) * numInstances + sizeof(glm::vec3) * numInstances + sizeof(float) * numInstances * 2));
+        glVertexAttribPointer(14, 1, GL_FLOAT, GL_FALSE, sizeof(float), (void*)(sizeof(glm::mat4) * NPCManager::MAX_NPCS + sizeof(glm::vec3) * NPCManager::MAX_NPCS + sizeof(float) * NPCManager::MAX_NPCS * 2));
         glVertexAttribDivisor(14, 1);
 
         // Set up instance ID attribute
@@ -1054,16 +832,12 @@ int main() {
 
     // Initialize Behavior Tree Factory
     BT::BehaviorTreeFactory factory;
-
-    // Register custom nodes
-    factory.registerNodeType<IdleNode>("Idle");
-    factory.registerNodeType<RunningNode>("Running");
-    factory.registerNodeType<ShouldRun>("ShouldRun");
+    BT::registerNodes(factory);
 
     // Create a blackboard
     auto blackboard = BT::Blackboard::create();
 
-    auto tree = factory.createTreeFromText(xml_text, blackboard);
+    auto tree = factory.createTreeFromText(BT::getMainTreeXML(), blackboard);
 
     // Main render loop
     while (!glfwWindowShouldClose(window)) {
@@ -1125,28 +899,28 @@ int main() {
         // Update UBOs
         updateUBOs(lightDir);
 
-        // Step 1: Process NPCs through the behavior tree 
-        for (auto& npc : npcs) {
-            blackboard->set("npc", &npc);
+        for (auto& npc : npcManager.getNPCs()) {  // Use non-const reference
+            blackboard->set("npc", &npc);  // Pass non-const pointer
             auto status = tree.tickOnce();
+            npc.update(deltaTime);
         }
 
         // Update instance data for GPU
         for (size_t i = 0; i < npcs.size(); ++i) {
-            instanceModels[i] = npcs[i].modelMatrix;
-            instanceColors[i] = npcs[i].color;
-            instanceAnimationTimes[i] = npcs[i].animationTime;
-            instanceStartFrames[i] = npcs[i].startFrame;
-            instanceEndFrames[i] = npcs[i].endFrame;
+            instanceModels[i] = npcs[i].getModelMatrix();
+            instanceColors[i] = npcs[i].getColor();
+            instanceAnimationTimes[i] = npcs[i].getAnimationTime();
+            instanceStartFrames[i] = npcs[i].getStartFrame();
+            instanceEndFrames[i] = npcs[i].getEndFrame();
         }
 
         // Upload instance data to GPU
         glBindBuffer(GL_ARRAY_BUFFER, instanceVBO);
-        glBufferSubData(GL_ARRAY_BUFFER, modelOffset, sizeof(glm::mat4) * numInstances, instanceModels.data());
-        glBufferSubData(GL_ARRAY_BUFFER, colorOffset, sizeof(glm::vec3) * numInstances, instanceColors.data());
-        glBufferSubData(GL_ARRAY_BUFFER, animTimeOffset, sizeof(float) * numInstances, instanceAnimationTimes.data());
-        glBufferSubData(GL_ARRAY_BUFFER, startFrameOffset, sizeof(float) * numInstances, instanceStartFrames.data());
-        glBufferSubData(GL_ARRAY_BUFFER, endFrameOffset, sizeof(float) * numInstances, instanceEndFrames.data());
+        glBufferSubData(GL_ARRAY_BUFFER, modelOffset, sizeof(glm::mat4) * NPCManager::MAX_NPCS, instanceModels.data());
+        glBufferSubData(GL_ARRAY_BUFFER, colorOffset, sizeof(glm::vec3) * NPCManager::MAX_NPCS, instanceColors.data());
+        glBufferSubData(GL_ARRAY_BUFFER, animTimeOffset, sizeof(float) * NPCManager::MAX_NPCS, instanceAnimationTimes.data());
+        glBufferSubData(GL_ARRAY_BUFFER, startFrameOffset, sizeof(float) * NPCManager::MAX_NPCS, instanceStartFrames.data());
+        glBufferSubData(GL_ARRAY_BUFFER, endFrameOffset, sizeof(float) * NPCManager::MAX_NPCS, instanceEndFrames.data());
         // Note: You don't need to update instance IDs every frame as they don't change
         glBindBuffer(GL_ARRAY_BUFFER, 0);
 
@@ -1195,7 +969,7 @@ int main() {
             }
 
             glBindVertexArray(mesh.VAO);
-            glDrawElementsInstanced(GL_TRIANGLES, mesh.indices.size(), GL_UNSIGNED_INT, 0, numInstances);
+            glDrawElementsInstanced(GL_TRIANGLES, mesh.indices.size(), GL_UNSIGNED_INT, 0, NPCManager::MAX_NPCS);
         }
 
         // Render the plane
@@ -1302,41 +1076,27 @@ void initTBO() {
     int maxBonesPerInstance = 31; // Must be 31 as required by the shader
     glGenBuffers(1, &modelLoader.boneTransformsTBO);
     glBindBuffer(GL_TEXTURE_BUFFER, modelLoader.boneTransformsTBO);
-    glBufferData(GL_TEXTURE_BUFFER, numInstances * maxBonesPerInstance * 16 * sizeof(float), NULL, GL_DYNAMIC_DRAW);
+    glBufferData(GL_TEXTURE_BUFFER, NPCManager::MAX_NPCS * maxBonesPerInstance * 16 * sizeof(float), NULL, GL_DYNAMIC_DRAW);
     glGenTextures(1, &modelLoader.boneTransformsTBOTexture);
     glBindTexture(GL_TEXTURE_BUFFER, modelLoader.boneTransformsTBOTexture);
     glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, modelLoader.boneTransformsTBO);
     glBindBuffer(GL_TEXTURE_BUFFER, 0);
 }
 
-// Update NPC animations
 void updateNPCAnimations(float deltaTime) {
     std::vector<glm::mat4> allBoneTransforms;
 
-    for (NPC& npc : npcs) {
-        npc.animationTime += deltaTime;
-
-        // Check if the animation index is valid
-        if (npc.currentAnimationIndex < 0 || npc.currentAnimationIndex >= animationNames.size()) {
-            std::cerr << "Error: Invalid animation index for NPC!" << std::endl;
-            continue;
-        }
-
+    const auto& npcs = npcManager.getNPCs();
+    for (const auto& npc : npcs) {
         std::vector<glm::mat4> npcBoneTransforms(modelLoader.getNumBones(), glm::mat4(1.0f));
-        modelLoader.updateBoneTransforms(npc.animationTime, animationNames[npc.currentAnimationIndex], npc.blendFactor, npc.startFrame, npc.endFrame, npcBoneTransforms);
-
-        if (npcBoneTransforms.size() != modelLoader.getNumBones()) {
-            std::cerr << "Error: Bone transform size mismatch for NPC!" << std::endl;
-        }
+        modelLoader.updateBoneTransforms(npc.getAnimationTime(), animationNames[npc.getCurrentAnimationIndex()],
+            npc.getBlendFactor(), npc.getStartFrame(), npc.getEndFrame(), npcBoneTransforms);
 
         allBoneTransforms.insert(allBoneTransforms.end(), npcBoneTransforms.begin(), npcBoneTransforms.end());
     }
 
     // Upload all bone transforms to the TBO
     glBindBuffer(GL_TEXTURE_BUFFER, modelLoader.getBoneTransformsTBO());
-    if (allBoneTransforms.size() * sizeof(glm::mat4) > numInstances * 31 * 16 * sizeof(float)) {
-        std::cerr << "Error: Exceeded allocated buffer size for bone transforms!" << std::endl;
-    }
     glBufferData(GL_TEXTURE_BUFFER, allBoneTransforms.size() * sizeof(glm::mat4), allBoneTransforms.data(), GL_DYNAMIC_DRAW);
     glBindBuffer(GL_TEXTURE_BUFFER, 0);
 }
@@ -1392,6 +1152,14 @@ void setupImGui(GLFWwindow* window) {
     // Initialize ImGui for GLFW and OpenGL
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 430");
+}
+
+void initializeNPCs() {
+    glm::mat4 originalModelMatrix = glm::mat4(1.0f);
+    originalModelMatrix = glm::rotate(originalModelMatrix, glm::radians(90.0f), glm::vec3(-1.0f, 0.0f, 0.0f));
+    originalModelMatrix = glm::scale(originalModelMatrix, glm::vec3(0.025f));
+
+    npcManager.initializeNPCs(WORLD_SIZE, NPCManager::MAX_NPCS, originalModelMatrix);
 }
 
 
