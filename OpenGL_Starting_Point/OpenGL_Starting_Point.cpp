@@ -469,7 +469,7 @@ const char* visorFragmentShaderSource = R"(
 
         // Adjusted Fresnel effect for reflections
         float reflectionFresnelFactor = pow(1.0 - max(dot(viewDir, normal), 0.0), 2.0); // Increased power for more noticeable reflections
-        reflectionFresnelFactor = mix(0.35, 1.0, reflectionFresnelFactor); // Adjusted range for better visibility
+        reflectionFresnelFactor = mix(0.65, 1.0, reflectionFresnelFactor); // Adjusted range for better visibility
 
         // Blend the original color and the reflected color
         color = mix(color, reflectedColor, reflectionFresnelFactor);
