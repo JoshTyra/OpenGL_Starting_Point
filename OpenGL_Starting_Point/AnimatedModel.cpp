@@ -14,9 +14,16 @@ ModelLoader::ModelLoader()
         glm::vec2(glm::radians(-45.0f), glm::radians(-5.0f)),  // Slight left tilt
         glm::vec2(glm::radians(30.0f), glm::radians(10.0f)),  // Slight upward tilt
         glm::vec2(glm::radians(-30.0f), glm::radians(-10.0f))  // Slight downward tilt
-        }) {}
+        }) {
+    // Initialize SSBOs is handled externally
+}
 
-ModelLoader::~ModelLoader() {}
+ModelLoader::~ModelLoader() {
+    glDeleteBuffers(1, &boneTransformSSBO);
+    glDeleteBuffers(1, &boneOffsetSSBO);
+    glDeleteBuffers(1, &animationMatricesSSBO);
+    glDeleteBuffers(1, &vertexDataSSBO);
+}
 
 void normalizeWeights(Vertex& vertex) {
     float totalWeight = vertex.Weights[0] + vertex.Weights[1] + vertex.Weights[2] + vertex.Weights[3];
@@ -25,18 +32,6 @@ void normalizeWeights(Vertex& vertex) {
         vertex.Weights[1] /= totalWeight;
         vertex.Weights[2] /= totalWeight;
         vertex.Weights[3] /= totalWeight;
-    }
-}
-
-// Function to print bone information
-void printBoneInfo(const aiScene* scene) {
-    for (unsigned int i = 0; i < scene->mNumMeshes; ++i) {
-        aiMesh* mesh = scene->mMeshes[i];
-        std::cout << "Mesh " << i << " has " << mesh->mNumBones << " bones.\n";
-        for (unsigned int j = 0; j < mesh->mNumBones; ++j) {
-            aiBone* bone = mesh->mBones[j];
-            std::cout << "Bone " << j << ": " << bone->mName.C_Str() << "\n";
-        }
     }
 }
 
@@ -49,8 +44,6 @@ void ModelLoader::loadModel(const std::string& path) {
     }
 
     std::cout << "Model loaded successfully." << std::endl;
-
-    printBoneInfo(scene);
 
     if (scene->mNumAnimations > 0) {
         std::cout << "Number of animations: " << scene->mNumAnimations << std::endl;
@@ -65,9 +58,15 @@ void ModelLoader::loadModel(const std::string& path) {
     aggregatedVertices.clear();
     processNode(scene->mRootNode, scene);
     loadedModelAABB = computeAABB(aggregatedVertices);
+
+    // Setup and bind the SSBO for vertex data
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, vertexDataSSBO);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, aggregatedVertices.size() * sizeof(Vertex), aggregatedVertices.data(), GL_STATIC_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, vertexDataSSBO);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 }
 
-void ModelLoader::updateBoneTransforms(float timeInSeconds, const std::string& animationName, float blendFactor, float startFrame, float endFrame, std::vector<glm::mat4>& outBoneTransforms) {
+void ModelLoader::updateBoneTransforms(int npcIndex, float timeInSeconds, const std::string& animationName, float blendFactor, float startFrame, float endFrame, std::vector<glm::mat4>& outBoneTransforms) {
     if (!scene || animationName.empty()) {
         outBoneTransforms.resize(boneInfo.size(), glm::mat4(1.0f));
         std::cout << "No scene or empty animation name" << std::endl;
@@ -91,6 +90,11 @@ void ModelLoader::updateBoneTransforms(float timeInSeconds, const std::string& a
     readNodeHierarchy(localAnimationTime, scene->mRootNode, identity, animationName, startFrame, endFrame, currentBoneTransforms);
 
     outBoneTransforms = currentBoneTransforms;
+
+    // Upload bone transforms to SSBO for the specific NPC
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, boneTransformSSBO);
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER, npcIndex * boneInfo.size() * sizeof(glm::mat4), outBoneTransforms.size() * sizeof(glm::mat4), outBoneTransforms.data());
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 }
 
 const std::vector<Mesh>& ModelLoader::getLoadedMeshes() const {
@@ -482,15 +486,53 @@ void ModelLoader::updateHeadRotation(float deltaTime, const std::string& animati
     }
 }
 
-void ModelLoader::setBoneTransformsTBO(GLuint tbo, GLuint tboTexture) {
-    boneTransformsTBO = tbo;
-    boneTransformsTBOTexture = tboTexture;
-}
-
-GLuint ModelLoader::getBoneTransformsTBO() const {
-    return boneTransformsTBO;
-}
-
 size_t ModelLoader::getNumBones() const {
     return boneInfo.size();
+}
+
+// Initialize the debug buffer SSBO in the initializeSSBOs method
+void ModelLoader::initializeSSBOs() {
+    size_t numBones = getNumBones();
+
+    glGenBuffers(1, &boneTransformSSBO);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, boneTransformSSBO);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, NPCManager::MAX_NPCS * numBones * sizeof(glm::mat4), NULL, GL_DYNAMIC_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, boneTransformSSBO);
+
+    glGenBuffers(1, &boneOffsetSSBO);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, boneOffsetSSBO);
+    std::vector<glm::mat4> boneOffsets;
+    for (const auto& bi : boneInfo) {
+        boneOffsets.push_back(bi.BoneOffset);
+    }
+    glBufferData(GL_SHADER_STORAGE_BUFFER, numBones * sizeof(glm::mat4), boneOffsets.data(), GL_STATIC_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, boneOffsetSSBO);
+
+    glGenBuffers(1, &animationMatricesSSBO);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, animationMatricesSSBO);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, NPCManager::MAX_NPCS * numBones * animations.size() * sizeof(glm::mat4), NULL, GL_DYNAMIC_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, animationMatricesSSBO);
+
+    glGenBuffers(1, &vertexDataSSBO);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, vertexDataSSBO);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, aggregatedVertices.size() * sizeof(Vertex), aggregatedVertices.data(), GL_STATIC_DRAW);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, vertexDataSSBO);
+
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+}
+
+GLuint ModelLoader::getBoneTransformSSBO() const {
+    return boneTransformSSBO;
+}
+
+GLuint ModelLoader::getBoneOffsetSSBO() const {
+    return boneOffsetSSBO;
+}
+
+GLuint ModelLoader::getAnimationMatricesSSBO() const {
+    return animationMatricesSSBO;
+}
+
+GLuint ModelLoader::getVertexDataSSBO() const {
+    return vertexDataSSBO;
 }

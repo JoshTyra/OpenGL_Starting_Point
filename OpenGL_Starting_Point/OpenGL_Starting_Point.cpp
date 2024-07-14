@@ -16,6 +16,7 @@
 #include <chrono>
 #include <map>
 #include <iostream>
+#include <fstream>
 #include "AnimatedModel.h"
 #include <vector>
 #include <queue>
@@ -75,6 +76,7 @@ AABB loadedModelAABB;
 glm::mat4 projectionMatrix;
 glm::mat4 viewMatrix;
 
+unsigned int computeShaderProgram;
 unsigned int characterShaderProgram;
 unsigned int visorShaderProgram;
 unsigned int characterTexture;
@@ -131,6 +133,8 @@ struct GridNode {
 unsigned int loadCubemap(std::vector<std::string> faces);
 unsigned int compileShader(unsigned int type, const char* source);
 unsigned int createShaderProgram(unsigned int vertexShader, unsigned int fragmentShader);
+unsigned int compileComputeShader(const char* source);
+unsigned int createComputeShaderProgram(unsigned int computeShader);
 unsigned int loadTexture(const char* path);
 void initShaders();
 void processInput(GLFWwindow* window);
@@ -140,12 +144,12 @@ void windowIconifyCallback(GLFWwindow* window, int iconified);
 void createPlane(float width, float height, float textureTiling);
 void loadPlaneTexture();
 void initPlaneShaders();
-void initTBO();
 void updateNPCAnimations(float deltaTime);
 void initUBOs();
 void updateUBOs(const glm::vec3& lightDir);
 void setupImGui(GLFWwindow* window);
 void initializeNPCs();
+void dispatchComputeShader();
 
 unsigned int loadCubemap(std::vector<std::string> faces) {
     unsigned int textureID;
@@ -209,6 +213,40 @@ unsigned int createShaderProgram(unsigned int vertexShader, unsigned int fragmen
     return program;
 }
 
+unsigned int compileComputeShader(const char* source) {
+    unsigned int shader = glCreateShader(GL_COMPUTE_SHADER);
+    glShaderSource(shader, 1, &source, nullptr);
+    glCompileShader(shader);
+
+    int success;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
+    if (!success) {
+        int infoLogLength;
+        glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &infoLogLength);
+        std::vector<char> infoLog(infoLogLength);
+        glGetShaderInfoLog(shader, infoLogLength, nullptr, infoLog.data());
+        std::cerr << "ERROR::SHADER::COMPUTE::COMPILATION_FAILED\n" << infoLog.data() << std::endl;
+    }
+    return shader;
+}
+
+unsigned int createComputeShaderProgram(unsigned int computeShader) {
+    unsigned int program = glCreateProgram();
+    glAttachShader(program, computeShader);
+    glLinkProgram(program);
+
+    int success;
+    glGetProgramiv(program, GL_LINK_STATUS, &success);
+    if (!success) {
+        int infoLogLength;
+        glGetProgramiv(program, GL_INFO_LOG_LENGTH, &infoLogLength);
+        std::vector<char> infoLog(infoLogLength);
+        glGetProgramInfoLog(program, infoLogLength, nullptr, infoLog.data());
+        std::cerr << "ERROR::PROGRAM::LINKING_FAILED\n" << infoLog.data() << std::endl;
+    }
+    return program;
+}
+
 unsigned int loadTexture(const char* path) {
     unsigned int textureID;
     glGenTextures(1, &textureID);
@@ -237,6 +275,40 @@ unsigned int loadTexture(const char* path) {
     }
     return textureID;
 }
+
+const char* boneTransformComputeShaderSource = R"(
+    #version 430 core
+
+    layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+
+    layout(std140, binding = 0) buffer BoneTransforms {
+        mat4 boneTransforms[];
+    };
+
+    layout(std140, binding = 1) buffer AnimationMatrices {
+        mat4 animationMatrices[];
+    };
+
+    uniform int numBones;
+    uniform int numAnimations;
+    uniform int numNPCs;
+
+    void main() {
+        uint npcIndex = gl_GlobalInvocationID.x / numBones;
+        uint boneIndex = gl_GlobalInvocationID.x % numBones;
+        uint matrixIndex = npcIndex * numBones + boneIndex;
+
+        if (npcIndex >= numNPCs || boneIndex >= numBones) {
+            return;
+        }
+
+        // Retrieve the bone transformation matrix
+        mat4 boneTransform = boneTransforms[matrixIndex];
+
+        // Update the animation matrices
+        animationMatrices[matrixIndex] = boneTransform;
+    }
+)";
 
 const char* characterVertexShaderSource = R"(
     #version 430 core
@@ -280,24 +352,20 @@ const char* characterVertexShaderSource = R"(
     out vec3 TangentViewDir;
     out vec3 InstanceColor;
 
-    layout(binding = 4) uniform samplerBuffer boneTransformsTBO;
+    layout(std430, binding = 0) readonly buffer BoneTransforms {
+        mat4 boneTransforms[];
+    };
 
     #define NUM_BONES 31 // Adjust this to match the maximum required per mesh
 
     mat4 calculateBoneTransform(ivec4 boneIDs, vec4 weights, int instanceID) {
         mat4 boneTransform = mat4(0.0);
-        int boneOffset = instanceID * NUM_BONES * 4;
+        int boneOffset = instanceID * NUM_BONES;
 
         for (int i = 0; i < 4; ++i) {
             if (weights[i] > 0.0) {
-                int index = boneOffset + boneIDs[i] * 4;
-                mat4 boneMatrix = mat4(
-                    texelFetch(boneTransformsTBO, index),
-                    texelFetch(boneTransformsTBO, index + 1),
-                    texelFetch(boneTransformsTBO, index + 2),
-                    texelFetch(boneTransformsTBO, index + 3)
-                );
-
+                int index = boneOffset + boneIDs[i];
+                mat4 boneMatrix = boneTransforms[index];
                 boneTransform += boneMatrix * weights[i];
             }
         }
@@ -328,7 +396,7 @@ const char* characterVertexShaderSource = R"(
         TangentLightDir = TBN * lightDir;
         TangentViewPos = TBN * viewPos;
         TangentFragPos = TBN * FragPos;
-        TangentViewDir = TBN * (viewPos - FragPos); // Transform view direction to tangent space
+        TangentViewDir = TBN * (viewPos - FragPos);
     }
 )";
 
@@ -576,6 +644,12 @@ void initShaders() {
 
     glDeleteShader(debugVertexShader);
     glDeleteShader(debugFragmentShader);
+
+    // Compile and link compute shader
+    unsigned int boneTransformComputeShader = compileComputeShader(boneTransformComputeShaderSource);
+    computeShaderProgram = createComputeShaderProgram(boneTransformComputeShader);
+
+    glDeleteShader(boneTransformComputeShader);
 }
 
 // Update the character's position based on forward direction and speed
@@ -677,9 +751,6 @@ int main() {
     glViewport(0, 0, WIDTH, HEIGHT);
 
     setupImGui(window);
-
-    // Initialize TBO
-    initTBO();
 
     glEnable(GL_DEPTH_TEST);
 
@@ -787,7 +858,7 @@ int main() {
     glBufferSubData(GL_ARRAY_BUFFER, animTimeOffset, sizeof(float)* NPCManager::MAX_NPCS, instanceAnimationTimes.data());
     glBufferSubData(GL_ARRAY_BUFFER, startFrameOffset, sizeof(float)* NPCManager::MAX_NPCS, instanceStartFrames.data());
     glBufferSubData(GL_ARRAY_BUFFER, endFrameOffset, sizeof(float)* NPCManager::MAX_NPCS, instanceEndFrames.data());
-    glBufferSubData(GL_ARRAY_BUFFER, idOffset, sizeof(int)* NPCManager::MAX_NPCS, instanceIDs.data());  // Add this line
+    glBufferSubData(GL_ARRAY_BUFFER, idOffset, sizeof(int)* NPCManager::MAX_NPCS, instanceIDs.data());
 
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 
@@ -838,6 +909,9 @@ int main() {
     auto blackboard = BT::Blackboard::create();
 
     auto tree = factory.createTreeFromText(BT::getMainTreeXML(), blackboard);
+
+    // Initialize SSBOs for bone transforms and vertex data
+    modelLoader.initializeSSBOs();
 
     // Main render loop
     while (!glfwWindowShouldClose(window)) {
@@ -921,18 +995,14 @@ int main() {
         glBufferSubData(GL_ARRAY_BUFFER, animTimeOffset, sizeof(float) * NPCManager::MAX_NPCS, instanceAnimationTimes.data());
         glBufferSubData(GL_ARRAY_BUFFER, startFrameOffset, sizeof(float) * NPCManager::MAX_NPCS, instanceStartFrames.data());
         glBufferSubData(GL_ARRAY_BUFFER, endFrameOffset, sizeof(float) * NPCManager::MAX_NPCS, instanceEndFrames.data());
-        // Note: You don't need to update instance IDs every frame as they don't change
         glBindBuffer(GL_ARRAY_BUFFER, 0);
 
-        // Update bone transforms and upload to TBO
-        glBindBuffer(GL_TEXTURE_BUFFER, modelLoader.getBoneTransformsTBO());
-        glBufferSubData(GL_TEXTURE_BUFFER, 0, modelLoader.getBoneTransforms().size() * sizeof(glm::mat4), modelLoader.getBoneTransforms().data());
-        glBindBuffer(GL_TEXTURE_BUFFER, 0);
+        // Update bone transforms and upload to SSBO
+        updateNPCAnimations(deltaTime);
+
+        dispatchComputeShader();
 
         glUseProgram(characterShaderProgram);
-
-        // Update animation states for each NPC
-        updateNPCAnimations(deltaTime);
 
         // Set up textures and draw the character
         glActiveTexture(GL_TEXTURE0);
@@ -950,9 +1020,6 @@ int main() {
         glActiveTexture(GL_TEXTURE3);
         glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture);
         glUniform1i(glGetUniformLocation(characterShaderProgram, "cubemap"), 3);
-
-        glActiveTexture(GL_TEXTURE4);
-        glBindTexture(GL_TEXTURE_BUFFER, modelLoader.boneTransformsTBOTexture);
 
         for (const auto& mesh : loadedMeshes) {
             if (mesh.meshBufferIndex == 0) {
@@ -1072,33 +1139,39 @@ void initPlaneShaders() {
     glDeleteShader(planeFragmentShader);
 }
 
-void initTBO() {
-    int maxBonesPerInstance = 31; // Must be 31 as required by the shader
-    glGenBuffers(1, &modelLoader.boneTransformsTBO);
-    glBindBuffer(GL_TEXTURE_BUFFER, modelLoader.boneTransformsTBO);
-    glBufferData(GL_TEXTURE_BUFFER, NPCManager::MAX_NPCS * maxBonesPerInstance * 16 * sizeof(float), NULL, GL_DYNAMIC_DRAW);
-    glGenTextures(1, &modelLoader.boneTransformsTBOTexture);
-    glBindTexture(GL_TEXTURE_BUFFER, modelLoader.boneTransformsTBOTexture);
-    glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, modelLoader.boneTransformsTBO);
-    glBindBuffer(GL_TEXTURE_BUFFER, 0);
-}
-
 void updateNPCAnimations(float deltaTime) {
-    std::vector<glm::mat4> allBoneTransforms;
-
+    size_t numBones = modelLoader.getNumBones();
+    size_t numAnimations = animationNames.size();
     const auto& npcs = npcManager.getNPCs();
-    for (const auto& npc : npcs) {
-        std::vector<glm::mat4> npcBoneTransforms(modelLoader.getNumBones(), glm::mat4(1.0f));
-        modelLoader.updateBoneTransforms(npc.getAnimationTime(), animationNames[npc.getCurrentAnimationIndex()],
-            npc.getBlendFactor(), npc.getStartFrame(), npc.getEndFrame(), npcBoneTransforms);
 
-        allBoneTransforms.insert(allBoneTransforms.end(), npcBoneTransforms.begin(), npcBoneTransforms.end());
+    // Resize allAnimationMatrices to fit all NPCs, all animations, and all bones
+    std::vector<glm::mat4> allAnimationMatrices(npcs.size() * numAnimations * numBones, glm::mat4(1.0f));
+
+    for (size_t npcIndex = 0; npcIndex < npcs.size(); ++npcIndex) {
+        const auto& npc = npcs[npcIndex];
+        for (size_t animIndex = 0; animIndex < numAnimations; ++animIndex) {
+            std::vector<glm::mat4> npcBoneTransforms(numBones, glm::mat4(1.0f));
+
+            modelLoader.updateBoneTransforms(
+                npcIndex,  // Pass the NPC index
+                npc.getAnimationTime(),
+                animationNames[animIndex],
+                npc.getBlendFactor(),
+                npc.getStartFrame(),
+                npc.getEndFrame(),
+                npcBoneTransforms
+            );
+
+            // Copy the bone transforms for this NPC and animation to the correct position in allAnimationMatrices
+            size_t startIndex = (npcIndex * numAnimations * numBones) + (animIndex * numBones);
+            std::copy(npcBoneTransforms.begin(), npcBoneTransforms.end(), allAnimationMatrices.begin() + startIndex);
+        }
     }
 
-    // Upload all bone transforms to the TBO
-    glBindBuffer(GL_TEXTURE_BUFFER, modelLoader.getBoneTransformsTBO());
-    glBufferData(GL_TEXTURE_BUFFER, allBoneTransforms.size() * sizeof(glm::mat4), allBoneTransforms.data(), GL_DYNAMIC_DRAW);
-    glBindBuffer(GL_TEXTURE_BUFFER, 0);
+    // Upload all animation matrices to the SSBO
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, modelLoader.getAnimationMatricesSSBO());
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, allAnimationMatrices.size() * sizeof(glm::mat4), allAnimationMatrices.data());
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 }
 
 void initUBOs() {
@@ -1161,6 +1234,43 @@ void initializeNPCs() {
 
     npcManager.initializeNPCs(WORLD_SIZE, NPCManager::MAX_NPCS, originalModelMatrix);
 }
+
+void dispatchComputeShader() {
+    glUseProgram(computeShaderProgram);
+    glUniform1i(glGetUniformLocation(computeShaderProgram, "numBones"), modelLoader.getNumBones());
+    glUniform1i(glGetUniformLocation(computeShaderProgram, "numAnimations"), animationNames.size());
+    glUniform1i(glGetUniformLocation(computeShaderProgram, "numNPCs"), NPCManager::MAX_NPCS);
+
+    glDispatchCompute((modelLoader.getNumBones() * NPCManager::MAX_NPCS + 31) / 32, 1, 1);
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+
+    //// Read debug data
+    //std::vector<glm::vec4> debugData(NPCManager::MAX_NPCS * modelLoader.getNumBones() * 4);
+    //glBindBuffer(GL_SHADER_STORAGE_BUFFER, modelLoader.getDebugBufferSSBO());
+    //glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, debugData.size() * sizeof(glm::vec4), debugData.data());
+
+    //// Save to file using FileSystemUtils
+    //std::string debugFilePath = FileSystemUtils::getAssetFilePath("debug_output.txt");
+    //std::ofstream outFile(debugFilePath);
+    //if (outFile.is_open()) {
+    //    for (size_t i = 0; i < debugData.size(); i += 4) {
+    //        outFile << "NPC: " << debugData[i + 3].x << ", Bone: " << debugData[i + 3].y
+    //            << ", Index: " << (i / 4) << "\n";
+    //        for (int row = 0; row < 4; ++row) {
+    //            outFile << debugData[i + row].x << " "
+    //                << debugData[i + row].y << " "
+    //                << debugData[i + row].z << " "
+    //                << debugData[i + row].w << "\n";
+    //        }
+    //        outFile << "\n";
+    //    }
+    //    outFile.close();
+    //}
+    //else {
+    //    std::cerr << "Unable to open file for writing debug output." << std::endl;
+    //}
+}
+
 
 
 

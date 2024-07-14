@@ -14,6 +14,7 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/string_cast.hpp>
 #include <iostream>
+#include "NPC.h"
 
 struct Vertex {
     glm::vec3 Position;
@@ -31,6 +32,7 @@ struct BoneInfo {
 
     BoneInfo() : BoneOffset(1.0f), FinalTransformation(1.0f) {}
 };
+
 struct Animation {
     std::string name;
     double duration;
@@ -63,19 +65,19 @@ public:
     ~ModelLoader();
 
     void loadModel(const std::string& path);
-    void updateBoneTransforms(float timeInSeconds, const std::string& animationName, float blendFactor, float startFrame, float endFrame, std::vector<glm::mat4>& outBoneTransforms);
+    void updateBoneTransforms(int npcIndex, float timeInSeconds, const std::string& animationName, float blendFactor, float startFrame, float endFrame, std::vector<glm::mat4>& outBoneTransforms);
     void setCurrentAnimation(const std::string& name);
     const std::vector<Mesh>& getLoadedMeshes() const;
     const AABB& getLoadedModelAABB() const;
     const std::vector<glm::mat4>& getBoneTransforms() const;
     void processAnimations();
     void updateHeadRotation(float deltaTime, const std::string& animationName, int currentAnimationIndex);
-    void setBoneTransformsTBO(GLuint tbo, GLuint tboTexture);
-    GLuint getBoneTransformsTBO() const;
     size_t getNumBones() const;
-
-    GLuint boneTransformsTBO;
-    GLuint boneTransformsTBOTexture;
+    GLuint getBoneTransformSSBO() const;
+    GLuint getBoneOffsetSSBO() const;
+    GLuint getAnimationMatricesSSBO() const;
+    GLuint getVertexDataSSBO() const;
+    void initializeSSBOs();
 
 private:
     void processNode(aiNode* node, const aiScene* scene);
@@ -111,6 +113,12 @@ private:
     float headRotationDuration;
     bool headRotationInProgress;
     std::vector<glm::vec2> headPoses;
+
+    // SSBOs for bone transforms, offsets, and animation matrices
+    GLuint boneTransformSSBO;
+    GLuint boneOffsetSSBO;
+    GLuint animationMatricesSSBO;
+    GLuint vertexDataSSBO;
 };
 
 #endif // MODELLOADER_H
