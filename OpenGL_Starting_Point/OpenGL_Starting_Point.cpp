@@ -356,7 +356,7 @@ const char* characterVertexShaderSource = R"(
         mat4 boneTransforms[];
     };
 
-    #define NUM_BONES 31 // Adjust this to match the maximum required per mesh
+    #define NUM_BONES 31
 
     mat4 calculateBoneTransform(ivec4 boneIDs, vec4 weights, int instanceID) {
         mat4 boneTransform = mat4(0.0);
@@ -377,6 +377,7 @@ const char* characterVertexShaderSource = R"(
         float animationDuration = instanceEndFrame - instanceStartFrame;
         float localAnimationTime = instanceStartFrame + mod(instanceAnimationTime - instanceStartFrame, animationDuration);
 
+        // Use precomputed bone transform from compute shader
         mat4 finalBoneTransform = calculateBoneTransform(aBoneIDs, aWeights, instanceID);
         vec3 transformedPos = vec3(finalBoneTransform * vec4(aPos, 1.0));
         vec4 worldPos = instanceModel * vec4(transformedPos, 1.0);
