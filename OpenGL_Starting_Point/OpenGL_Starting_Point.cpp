@@ -335,8 +335,8 @@ const char* characterVertexShaderSource = R"(
     layout(location = 2) in vec3 aNormal;
     layout(location = 3) in vec3 aTangent;
     layout(location = 4) in vec3 aBitangent;
-    layout(location = 5) in ivec4 aBoneIDs;
-    layout(location = 6) in vec4 aWeights;
+    layout(location = 5) in ivec2 aBoneIDs;  // Changed from ivec4
+    layout(location = 6) in vec2 aWeights;   // Changed from vec4
     layout(location = 7) in mat4 instanceModel;
     layout(location = 11) in vec3 instanceColor;
     layout(location = 12) in float instanceAnimationTime;
@@ -358,11 +358,11 @@ const char* characterVertexShaderSource = R"(
 
     #define NUM_BONES 31
 
-    mat4 calculateBoneTransform(ivec4 boneIDs, vec4 weights, int instanceID) {
+    mat4 calculateBoneTransform(ivec2 boneIDs, vec2 weights, int instanceID) {
         mat4 boneTransform = mat4(0.0);
         int boneOffset = instanceID * NUM_BONES;
 
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < 2; ++i) {  // Changed from 4 to 2
             if (weights[i] > 0.0) {
                 int index = boneOffset + boneIDs[i];
                 mat4 boneMatrix = boneTransforms[index];

@@ -26,12 +26,10 @@ ModelLoader::~ModelLoader() {
 }
 
 void normalizeWeights(Vertex& vertex) {
-    float totalWeight = vertex.Weights[0] + vertex.Weights[1] + vertex.Weights[2] + vertex.Weights[3];
+    float totalWeight = vertex.Weights[0] + vertex.Weights[1];
     if (totalWeight > 0.0f) {
         vertex.Weights[0] /= totalWeight;
         vertex.Weights[1] /= totalWeight;
-        vertex.Weights[2] /= totalWeight;
-        vertex.Weights[3] /= totalWeight;
     }
 }
 
@@ -163,7 +161,7 @@ void ModelLoader::processMesh(aiMesh* mesh, const aiScene* scene, const aiMatrix
             int vertexID = bone->mWeights[j].mVertexId;
             float weight = bone->mWeights[j].mWeight;
 
-            for (int k = 0; k < 4; ++k) {
+            for (int k = 0; k < 2; ++k) {  // Changed from 4 to 2
                 if (vertices[vertexID].Weights[k] == 0.0f) {
                     vertices[vertexID].BoneIDs[k] = boneIndex;
                     vertices[vertexID].Weights[k] = weight;
@@ -225,11 +223,11 @@ void ModelLoader::storeMesh(const std::vector<Vertex>& vertices, const std::vect
     glEnableVertexAttribArray(4);
 
     // Bone IDs
-    glVertexAttribIPointer(5, 4, GL_INT, sizeof(Vertex), (void*)offsetof(Vertex, BoneIDs));
+    glVertexAttribIPointer(5, 2, GL_INT, sizeof(Vertex), (void*)offsetof(Vertex, BoneIDs));
     glEnableVertexAttribArray(5);
 
     // Bone Weights
-    glVertexAttribPointer(6, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, Weights));
+    glVertexAttribPointer(6, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, Weights));
     glEnableVertexAttribArray(6);
 
     glBindVertexArray(0);

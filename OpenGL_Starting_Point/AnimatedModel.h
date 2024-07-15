@@ -22,8 +22,8 @@ struct Vertex {
     glm::vec3 Normal;
     glm::vec3 Tangent;
     glm::vec3 Bitangent;
-    glm::ivec4 BoneIDs;
-    glm::vec4 Weights;
+    glm::ivec2 BoneIDs;  // Changed from ivec4 to ivec2
+    glm::vec2 Weights;   // Changed from vec4 to vec2
 };
 
 struct BoneInfo {
