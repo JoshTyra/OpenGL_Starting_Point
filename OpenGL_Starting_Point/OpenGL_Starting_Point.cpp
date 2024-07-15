@@ -498,9 +498,14 @@ const char* visorFragmentShaderSource = R"(
     layout(binding = 1) uniform sampler2D texture_normal;
     layout(binding = 3) uniform samplerCube visorCubemap;
 
+    // uniform for the reflection color
+    uniform vec3 reflectionColor = vec3(0.9372f, 0.7215f, 0.7215f);
+    uniform float normalMapStrength = 0.4f; // Control the strength of the normal map
+
     void main() {
         vec3 normal = texture(texture_normal, TexCoord).rgb * 2.0 - 1.0;
         normal.y = -normal.y;
+        normal.xy *= normalMapStrength; // Use the normal map strength uniform
         normal = normalize(normal);
 
         vec4 diffuseTexture = texture(texture_diffuse, TexCoord);
@@ -535,6 +540,9 @@ const char* visorFragmentShaderSource = R"(
         vec3 reflectedDir = reflect(-viewDir, normal); // Reflect view direction in tangent space
         vec3 reflectedColor = texture(visorCubemap, reflectedDir).rgb;
         reflectedColor *= specularMask;
+
+        // Apply the reflection color
+        reflectedColor *= reflectionColor;
 
         // Adjusted Fresnel effect for reflections
         float reflectionFresnelFactor = pow(1.0 - max(dot(viewDir, normal), 0.0), 2.0); // Increased power for more noticeable reflections
@@ -1202,10 +1210,10 @@ void updateUBOs(const glm::vec3& lightDir) {
     // Update Light UBO
     LightData lightData;
     lightData.lightDir = lightDir;
-    lightData.ambientColor = glm::vec3(0.4f, 0.4f, 0.4f);
+    lightData.ambientColor = glm::vec3(0.45f, 0.45f, 0.45f);
     lightData.diffuseColor = glm::vec3(1.0f, 1.0f, 1.0f);
     lightData.specularColor = glm::vec3(0.6f, 0.6f, 0.6f);
-    lightData.lightIntensity = 1.25f;
+    lightData.lightIntensity = 1.0f;
     lightData.shininess = 16.0f;
 
     glBindBuffer(GL_UNIFORM_BUFFER, lightUBO);
