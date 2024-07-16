@@ -294,7 +294,8 @@ const char* boneTransformComputeShaderSource = R"(
     uniform int numAnimations;
     uniform int numNPCs;
 
-    #define BONES_PER_THREAD 4
+    #define BONES_PER_THREAD 8
+
     shared mat4 sharedBoneTransforms[32 * BONES_PER_THREAD];
 
     void main() {
@@ -303,7 +304,6 @@ const char* boneTransformComputeShaderSource = R"(
         uint npcIndex = globalIndex / (numBones / BONES_PER_THREAD);
         uint startBoneIndex = (globalIndex % (numBones / BONES_PER_THREAD)) * BONES_PER_THREAD;
 
-        // Load data into shared memory
         if (npcIndex < numNPCs) {
             for (int i = 0; i < BONES_PER_THREAD; ++i) {
                 uint boneIndex = startBoneIndex + i;
@@ -316,7 +316,6 @@ const char* boneTransformComputeShaderSource = R"(
 
         barrier();
 
-        // Process and write back
         if (npcIndex < numNPCs) {
             for (int i = 0; i < BONES_PER_THREAD; ++i) {
                 uint boneIndex = startBoneIndex + i;
@@ -1276,7 +1275,7 @@ void dispatchComputeShader() {
     glUniform1i(glGetUniformLocation(computeShaderProgram, "numAnimations"), animationNames.size());
     glUniform1i(glGetUniformLocation(computeShaderProgram, "numNPCs"), NPCManager::MAX_NPCS);
 
-    const int BONES_PER_THREAD = 4;
+    const int BONES_PER_THREAD = 8;
     uint32_t numWorkGroups = (modelLoader.getNumBones() * NPCManager::MAX_NPCS + 31 * BONES_PER_THREAD - 1) / (32 * BONES_PER_THREAD);
     glDispatchCompute(numWorkGroups, 1, 1);
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
