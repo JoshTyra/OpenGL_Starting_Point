@@ -327,8 +327,8 @@ void ModelLoader::calcInterpolatedRotation(aiQuaternion& out, float animationTim
     glm::quat startRotation = glm::quat(startRotationQ.w, startRotationQ.x, startRotationQ.y, startRotationQ.z);
     glm::quat endRotation = glm::quat(endRotationQ.w, endRotationQ.x, endRotationQ.y, endRotationQ.z);
 
-    // Use GLM's optimized quaternion interpolation
-    glm::quat result = glm::slerp(startRotation, endRotation, factor);
+    // Fast approximation of slerp
+    glm::quat result = fastSlerp(startRotation, endRotation, factor);
 
     // Convert back to aiQuaternion
     out = aiQuaternion(result.w, result.x, result.y, result.z);
@@ -548,4 +548,28 @@ GLuint ModelLoader::getAnimationMatricesSSBO() const {
 
 GLuint ModelLoader::getVertexDataSSBO() const {
     return vertexDataSSBO;
+}
+
+glm::quat ModelLoader::fastSlerp(const glm::quat& start, const glm::quat& end, float t) {
+    // Compute the cosine of the angle between the two vectors
+    float cosTheta = glm::dot(start, end);
+
+    // If the dot product is negative, slerp won't take the shorter path
+    // Fix by reversing one quaternion
+    glm::quat end2 = end;
+    if (cosTheta < 0.0f) {
+        end2 = -end;
+        cosTheta = -cosTheta;
+    }
+
+    // Perform a linear interpolation when cosTheta is close to 1 to avoid side effect of sin(angle) becoming a zero denominator
+    if (cosTheta > 0.9999f) {
+        // Linear interpolation
+        return glm::normalize(glm::mix(start, end2, t));
+    }
+    else {
+        // Essential Mathematics, p. 467
+        float angle = acos(cosTheta);
+        return (start * sin((1.0f - t) * angle) + end2 * sin(t * angle)) / sin(angle);
+    }
 }

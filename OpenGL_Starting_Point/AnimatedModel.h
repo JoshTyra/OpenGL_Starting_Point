@@ -96,6 +96,7 @@ private:
     unsigned int findPosition(float animationTime, const aiNodeAnim* nodeAnim);
     AABB computeAABB(const std::vector<Vertex>& vertices);
     AABB transformAABB(const AABB& aabb, const glm::mat4& transform);
+    glm::quat fastSlerp(const glm::quat& start, const glm::quat& end, float t);
 
     std::vector<Vertex> aggregatedVertices;
     std::vector<Mesh> loadedMeshes;
