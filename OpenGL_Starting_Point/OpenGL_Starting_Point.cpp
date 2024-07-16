@@ -286,50 +286,30 @@ const char* boneTransformComputeShaderSource = R"(
 
     layout(local_size_x = 256) in;
 
-    struct BoneTransform {
-        mat3x4 transform; // Using 3x4 matrix instead of 4x4
-    };
-
     layout(std430, binding = 0) buffer BoneTransforms {
-        BoneTransform boneTransforms[];
+        mat4 boneTransforms[];
     };
 
     layout(std430, binding = 1) buffer AnimationMatrices {
-        mat3x4 animationMatrices[];
+        mat4 animationMatrices[];
     };
 
     uniform int numBones;
     uniform int numAnimations;
     uniform int numNPCs;
 
-    shared BoneTransform sharedBoneTransforms[256];
-
     void main() {
         uint globalIndex = gl_GlobalInvocationID.x;
-        uint localIndex = gl_LocalInvocationID.x;
     
-        if (globalIndex < numBones * numNPCs) {
-            uint npcIndex = globalIndex / numBones;
+        if (globalIndex < numBones * numNPCs * numAnimations) {
+            uint npcIndex = globalIndex / (numBones * numAnimations);
+            uint animIndex = (globalIndex / numBones) % numAnimations;
             uint boneIndex = globalIndex % numBones;
         
-            // Load data into shared memory
-            sharedBoneTransforms[localIndex] = boneTransforms[globalIndex];
-        }
-    
-        barrier();
-    
-        if (globalIndex < numBones * numNPCs) {
-            uint npcIndex = globalIndex / numBones;
-            uint boneIndex = globalIndex % numBones;
+            uint inIndex = npcIndex * numBones * numAnimations + animIndex * numBones + boneIndex;
+            uint outIndex = globalIndex;
         
-            // Process bone transform
-            mat3x4 finalTransform = sharedBoneTransforms[localIndex].transform;
-        
-            // Store result
-            for (int animIndex = 0; animIndex < numAnimations; ++animIndex) {
-                uint outIndex = (npcIndex * numAnimations + animIndex) * numBones + boneIndex;
-                animationMatrices[outIndex] = finalTransform;
-            }
+            animationMatrices[outIndex] = boneTransforms[inIndex];
         }
     }
 )";
@@ -1194,16 +1174,17 @@ void updateNPCAnimations(float deltaTime) {
     size_t numAnimations = animationNames.size();
     const auto& npcs = npcManager.getNPCs();
 
-    // Resize allAnimationMatrices to fit all NPCs, all animations, and all bones
+    // Preallocate a single large buffer for all NPCs
     std::vector<glm::mat4> allAnimationMatrices(npcs.size() * numAnimations * numBones, glm::mat4(1.0f));
 
+#pragma omp parallel for
     for (size_t npcIndex = 0; npcIndex < npcs.size(); ++npcIndex) {
         const auto& npc = npcs[npcIndex];
         for (size_t animIndex = 0; animIndex < numAnimations; ++animIndex) {
             std::vector<glm::mat4> npcBoneTransforms(numBones, glm::mat4(1.0f));
 
             modelLoader.updateBoneTransforms(
-                npcIndex,  // Pass the NPC index
+                npcIndex,
                 npc.getAnimationTime(),
                 animationNames[animIndex],
                 npc.getBlendFactor(),
@@ -1218,7 +1199,7 @@ void updateNPCAnimations(float deltaTime) {
         }
     }
 
-    // Upload all animation matrices to the SSBO
+    // Upload all animation matrices to the SSBO in a single call
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, modelLoader.getAnimationMatricesSSBO());
     glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, allAnimationMatrices.size() * sizeof(glm::mat4), allAnimationMatrices.data());
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
