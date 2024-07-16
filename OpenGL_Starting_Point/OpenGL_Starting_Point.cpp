@@ -77,6 +77,9 @@ AABB loadedModelAABB;
 glm::mat4 projectionMatrix;
 glm::mat4 viewMatrix;
 
+GLuint instanceVBO;
+void* persistentInstancePtr;
+
 unsigned int computeShaderProgram;
 unsigned int characterShaderProgram;
 unsigned int visorShaderProgram;
@@ -870,7 +873,12 @@ int main() {
         sizeof(float) * NPCManager::MAX_NPCS * 3 +
         sizeof(int) * NPCManager::MAX_NPCS;
 
-    glBufferData(GL_ARRAY_BUFFER, totalSize, nullptr, GL_STATIC_DRAW);
+    // Use glBufferStorage instead of glBufferData
+    glBufferStorage(GL_ARRAY_BUFFER, totalSize, nullptr, GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT);
+
+    // Map the buffer
+    persistentInstancePtr = glMapBufferRange(GL_ARRAY_BUFFER, 0, totalSize,
+        GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_FLUSH_EXPLICIT_BIT);
 
     // Calculate offsets for each data type
     size_t modelOffset = 0;
@@ -880,12 +888,15 @@ int main() {
     size_t endFrameOffset = startFrameOffset + sizeof(float) * NPCManager::MAX_NPCS;
     size_t idOffset = endFrameOffset + sizeof(float) * NPCManager::MAX_NPCS;
 
-    glBufferSubData(GL_ARRAY_BUFFER, modelOffset, sizeof(glm::mat4)* NPCManager::MAX_NPCS, instanceModels.data());
-    glBufferSubData(GL_ARRAY_BUFFER, colorOffset, sizeof(glm::vec3)* NPCManager::MAX_NPCS, instanceColors.data());
-    glBufferSubData(GL_ARRAY_BUFFER, animTimeOffset, sizeof(float)* NPCManager::MAX_NPCS, instanceAnimationTimes.data());
-    glBufferSubData(GL_ARRAY_BUFFER, startFrameOffset, sizeof(float)* NPCManager::MAX_NPCS, instanceStartFrames.data());
-    glBufferSubData(GL_ARRAY_BUFFER, endFrameOffset, sizeof(float)* NPCManager::MAX_NPCS, instanceEndFrames.data());
-    glBufferSubData(GL_ARRAY_BUFFER, idOffset, sizeof(int)* NPCManager::MAX_NPCS, instanceIDs.data());
+    // Copy initial data to the mapped buffer
+    memcpy((char*)persistentInstancePtr + modelOffset, instanceModels.data(), sizeof(glm::mat4) * NPCManager::MAX_NPCS);
+    memcpy((char*)persistentInstancePtr + colorOffset, instanceColors.data(), sizeof(glm::vec3) * NPCManager::MAX_NPCS);
+    memcpy((char*)persistentInstancePtr + animTimeOffset, instanceAnimationTimes.data(), sizeof(float) * NPCManager::MAX_NPCS);
+    memcpy((char*)persistentInstancePtr + startFrameOffset, instanceStartFrames.data(), sizeof(float) * NPCManager::MAX_NPCS);
+    memcpy((char*)persistentInstancePtr + endFrameOffset, instanceEndFrames.data(), sizeof(float) * NPCManager::MAX_NPCS);
+    memcpy((char*)persistentInstancePtr + idOffset, instanceIDs.data(), sizeof(int) * NPCManager::MAX_NPCS);
+
+    glFlushMappedBufferRange(GL_ARRAY_BUFFER, 0, totalSize);
 
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 
@@ -1022,14 +1033,14 @@ int main() {
             instanceEndFrames[i] = npcs[i].getEndFrame();
         }
 
-        // Upload instance data to GPU
-        glBindBuffer(GL_ARRAY_BUFFER, instanceVBO);
-        glBufferSubData(GL_ARRAY_BUFFER, modelOffset, sizeof(glm::mat4) * NPCManager::MAX_NPCS, instanceModels.data());
-        glBufferSubData(GL_ARRAY_BUFFER, colorOffset, sizeof(glm::vec3) * NPCManager::MAX_NPCS, instanceColors.data());
-        glBufferSubData(GL_ARRAY_BUFFER, animTimeOffset, sizeof(float) * NPCManager::MAX_NPCS, instanceAnimationTimes.data());
-        glBufferSubData(GL_ARRAY_BUFFER, startFrameOffset, sizeof(float) * NPCManager::MAX_NPCS, instanceStartFrames.data());
-        glBufferSubData(GL_ARRAY_BUFFER, endFrameOffset, sizeof(float) * NPCManager::MAX_NPCS, instanceEndFrames.data());
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        // Update the persistent mapped buffer
+        memcpy((char*)persistentInstancePtr + modelOffset, instanceModels.data(), sizeof(glm::mat4) * NPCManager::MAX_NPCS);
+        memcpy((char*)persistentInstancePtr + colorOffset, instanceColors.data(), sizeof(glm::vec3) * NPCManager::MAX_NPCS);
+        memcpy((char*)persistentInstancePtr + animTimeOffset, instanceAnimationTimes.data(), sizeof(float) * NPCManager::MAX_NPCS);
+        memcpy((char*)persistentInstancePtr + startFrameOffset, instanceStartFrames.data(), sizeof(float) * NPCManager::MAX_NPCS);
+        memcpy((char*)persistentInstancePtr + endFrameOffset, instanceEndFrames.data(), sizeof(float) * NPCManager::MAX_NPCS);
+
+        glFlushMappedBufferRange(GL_ARRAY_BUFFER, 0, totalSize);
 
         // Update bone transforms and upload to SSBO
         updateNPCAnimations(deltaTime);
@@ -1112,6 +1123,8 @@ int main() {
     glDeleteProgram(debugShaderProgram);
     glDeleteBuffers(1, &cameraUBO);
     glDeleteBuffers(1, &lightUBO);
+    glUnmapBuffer(GL_ARRAY_BUFFER);
+    glDeleteBuffers(1, &instanceVBO);
 
     glfwTerminate();
     return 0;
