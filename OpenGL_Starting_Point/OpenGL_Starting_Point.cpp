@@ -283,49 +283,51 @@ unsigned int loadTexture(const char* path) {
 const char* boneTransformComputeShaderSource = R"(
     #version 430 core
 
-    layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+    layout(local_size_x = 256) in;
 
-    layout(std140, binding = 0) buffer BoneTransforms {
-        mat4 boneTransforms[];
+    struct BoneTransform {
+        mat3x4 transform; // Using 3x4 matrix instead of 4x4
     };
 
-    layout(std140, binding = 1) buffer AnimationMatrices {
-        mat4 animationMatrices[];
+    layout(std430, binding = 0) buffer BoneTransforms {
+        BoneTransform boneTransforms[];
+    };
+
+    layout(std430, binding = 1) buffer AnimationMatrices {
+        mat3x4 animationMatrices[];
     };
 
     uniform int numBones;
     uniform int numAnimations;
     uniform int numNPCs;
 
-    #define BONES_PER_THREAD 8
-
-    shared mat4 sharedBoneTransforms[32 * BONES_PER_THREAD];
+    shared BoneTransform sharedBoneTransforms[256];
 
     void main() {
-        uint localIndex = gl_LocalInvocationID.x;
         uint globalIndex = gl_GlobalInvocationID.x;
-        uint npcIndex = globalIndex / (numBones / BONES_PER_THREAD);
-        uint startBoneIndex = (globalIndex % (numBones / BONES_PER_THREAD)) * BONES_PER_THREAD;
-
-        if (npcIndex < numNPCs) {
-            for (int i = 0; i < BONES_PER_THREAD; ++i) {
-                uint boneIndex = startBoneIndex + i;
-                if (boneIndex < numBones) {
-                    uint matrixIndex = npcIndex * numBones + boneIndex;
-                    sharedBoneTransforms[localIndex * BONES_PER_THREAD + i] = boneTransforms[matrixIndex];
-                }
-            }
+        uint localIndex = gl_LocalInvocationID.x;
+    
+        if (globalIndex < numBones * numNPCs) {
+            uint npcIndex = globalIndex / numBones;
+            uint boneIndex = globalIndex % numBones;
+        
+            // Load data into shared memory
+            sharedBoneTransforms[localIndex] = boneTransforms[globalIndex];
         }
-
+    
         barrier();
-
-        if (npcIndex < numNPCs) {
-            for (int i = 0; i < BONES_PER_THREAD; ++i) {
-                uint boneIndex = startBoneIndex + i;
-                if (boneIndex < numBones) {
-                    uint matrixIndex = npcIndex * numBones + boneIndex;
-                    animationMatrices[matrixIndex] = sharedBoneTransforms[localIndex * BONES_PER_THREAD + i];
-                }
+    
+        if (globalIndex < numBones * numNPCs) {
+            uint npcIndex = globalIndex / numBones;
+            uint boneIndex = globalIndex % numBones;
+        
+            // Process bone transform
+            mat3x4 finalTransform = sharedBoneTransforms[localIndex].transform;
+        
+            // Store result
+            for (int animIndex = 0; animIndex < numAnimations; ++animIndex) {
+                uint outIndex = (npcIndex * numAnimations + animIndex) * numBones + boneIndex;
+                animationMatrices[outIndex] = finalTransform;
             }
         }
     }

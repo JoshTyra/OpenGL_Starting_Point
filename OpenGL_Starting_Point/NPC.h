@@ -64,7 +64,7 @@ public:
     #ifdef _DEBUG
         static const int MAX_NPCS = 8;
     #else
-        static const int MAX_NPCS = 100;
+        static const int MAX_NPCS = 125;
     #endif
 
     NPCManager();
