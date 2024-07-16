@@ -27,6 +27,7 @@
 #include "backends/imgui_impl_opengl3.h"
 #include "BehaviorTrees.h"
 #include "NPC.h"
+#include "FrameTimeTracker.h"
 
 // Constants and global variables
 const int WIDTH = 2560;
@@ -293,20 +294,38 @@ const char* boneTransformComputeShaderSource = R"(
     uniform int numAnimations;
     uniform int numNPCs;
 
-    void main() {
-        uint npcIndex = gl_GlobalInvocationID.x / numBones;
-        uint boneIndex = gl_GlobalInvocationID.x % numBones;
-        uint matrixIndex = npcIndex * numBones + boneIndex;
+    #define BONES_PER_THREAD 4
+    shared mat4 sharedBoneTransforms[32 * BONES_PER_THREAD];
 
-        if (npcIndex >= numNPCs || boneIndex >= numBones) {
-            return;
+    void main() {
+        uint localIndex = gl_LocalInvocationID.x;
+        uint globalIndex = gl_GlobalInvocationID.x;
+        uint npcIndex = globalIndex / (numBones / BONES_PER_THREAD);
+        uint startBoneIndex = (globalIndex % (numBones / BONES_PER_THREAD)) * BONES_PER_THREAD;
+
+        // Load data into shared memory
+        if (npcIndex < numNPCs) {
+            for (int i = 0; i < BONES_PER_THREAD; ++i) {
+                uint boneIndex = startBoneIndex + i;
+                if (boneIndex < numBones) {
+                    uint matrixIndex = npcIndex * numBones + boneIndex;
+                    sharedBoneTransforms[localIndex * BONES_PER_THREAD + i] = boneTransforms[matrixIndex];
+                }
+            }
         }
 
-        // Retrieve the bone transformation matrix
-        mat4 boneTransform = boneTransforms[matrixIndex];
+        barrier();
 
-        // Update the animation matrices
-        animationMatrices[matrixIndex] = boneTransform;
+        // Process and write back
+        if (npcIndex < numNPCs) {
+            for (int i = 0; i < BONES_PER_THREAD; ++i) {
+                uint boneIndex = startBoneIndex + i;
+                if (boneIndex < numBones) {
+                    uint matrixIndex = npcIndex * numBones + boneIndex;
+                    animationMatrices[matrixIndex] = sharedBoneTransforms[localIndex * BONES_PER_THREAD + i];
+                }
+            }
+        }
     }
 )";
 
@@ -922,8 +941,11 @@ int main() {
     // Initialize SSBOs for bone transforms and vertex data
     modelLoader.initializeSSBOs();
 
+    FrameTimeTracker frameTracker;
+
     // Main render loop
     while (!glfwWindowShouldClose(window)) {
+        frameTracker.update();
         float currentFrame = static_cast<float>(glfwGetTime());
         deltaTime = currentFrame - lastFrame;
         lastFrame = currentFrame;
@@ -934,8 +956,12 @@ int main() {
 
         // Update FPS every second
         if (elapsedTime >= 1.0) {
-            double fps = frameCount / elapsedTime;
-            std::string title = "OpenGL Basic Application - FPS: " + std::to_string(fps);
+            double avgFPS = 1000.0 / frameTracker.getAverageFrameTime();
+            double minFPS = 1000.0 / frameTracker.getMaxFrameTime();
+            double maxFPS = 1000.0 / frameTracker.getMinFrameTime();
+            std::string title = "OpenGL Basic Application - Avg FPS: " + std::to_string(avgFPS) +
+                " Min: " + std::to_string(minFPS) +
+                " Max: " + std::to_string(maxFPS);
             glfwSetWindowTitle(window, title.c_str());
 
             // Reset for the next second
@@ -1250,34 +1276,10 @@ void dispatchComputeShader() {
     glUniform1i(glGetUniformLocation(computeShaderProgram, "numAnimations"), animationNames.size());
     glUniform1i(glGetUniformLocation(computeShaderProgram, "numNPCs"), NPCManager::MAX_NPCS);
 
-    glDispatchCompute((modelLoader.getNumBones() * NPCManager::MAX_NPCS + 31) / 32, 1, 1);
+    const int BONES_PER_THREAD = 4;
+    uint32_t numWorkGroups = (modelLoader.getNumBones() * NPCManager::MAX_NPCS + 31 * BONES_PER_THREAD - 1) / (32 * BONES_PER_THREAD);
+    glDispatchCompute(numWorkGroups, 1, 1);
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
-
-    //// Read debug data
-    //std::vector<glm::vec4> debugData(NPCManager::MAX_NPCS * modelLoader.getNumBones() * 4);
-    //glBindBuffer(GL_SHADER_STORAGE_BUFFER, modelLoader.getDebugBufferSSBO());
-    //glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, debugData.size() * sizeof(glm::vec4), debugData.data());
-
-    //// Save to file using FileSystemUtils
-    //std::string debugFilePath = FileSystemUtils::getAssetFilePath("debug_output.txt");
-    //std::ofstream outFile(debugFilePath);
-    //if (outFile.is_open()) {
-    //    for (size_t i = 0; i < debugData.size(); i += 4) {
-    //        outFile << "NPC: " << debugData[i + 3].x << ", Bone: " << debugData[i + 3].y
-    //            << ", Index: " << (i / 4) << "\n";
-    //        for (int row = 0; row < 4; ++row) {
-    //            outFile << debugData[i + row].x << " "
-    //                << debugData[i + row].y << " "
-    //                << debugData[i + row].z << " "
-    //                << debugData[i + row].w << "\n";
-    //        }
-    //        outFile << "\n";
-    //    }
-    //    outFile.close();
-    //}
-    //else {
-    //    std::cerr << "Unable to open file for writing debug output." << std::endl;
-    //}
 }
 
 
