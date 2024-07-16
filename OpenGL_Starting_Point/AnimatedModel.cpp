@@ -253,7 +253,12 @@ void ModelLoader::readNodeHierarchy(float animationTime, const aiNode* node, con
 
         aiQuaternion rotationQ;
         calcInterpolatedRotation(rotationQ, animationTime, nodeAnim);
-        glm::mat4 rotationM = glm::mat4_cast(glm::quat(rotationQ.w, rotationQ.x, rotationQ.y, rotationQ.z));
+
+        // Convert aiQuaternion to glm::quat
+        glm::quat rotation = glm::quat(rotationQ.w, rotationQ.x, rotationQ.y, rotationQ.z);
+
+        // Use optimized conversion from quaternion to matrix
+        glm::mat4 rotationM = glm::mat4_cast(rotation);
 
         aiVector3D translation;
         calcInterpolatedPosition(translation, animationTime, nodeAnim);
@@ -310,13 +315,23 @@ void ModelLoader::calcInterpolatedRotation(aiQuaternion& out, float animationTim
     unsigned int rotationIndex = findRotation(animationTime, nodeAnim);
     unsigned int nextRotationIndex = (rotationIndex + 1);
     assert(nextRotationIndex < nodeAnim->mNumRotationKeys);
+
     float deltaTime = (float)(nodeAnim->mRotationKeys[nextRotationIndex].mTime - nodeAnim->mRotationKeys[rotationIndex].mTime);
     float factor = (animationTime - (float)nodeAnim->mRotationKeys[rotationIndex].mTime) / deltaTime;
     assert(factor >= 0.0f && factor <= 1.0f);
+
     const aiQuaternion& startRotationQ = nodeAnim->mRotationKeys[rotationIndex].mValue;
     const aiQuaternion& endRotationQ = nodeAnim->mRotationKeys[nextRotationIndex].mValue;
-    aiQuaternion::Interpolate(out, startRotationQ, endRotationQ, factor);
-    out = out.Normalize();
+
+    // Convert aiQuaternion to glm::quat
+    glm::quat startRotation = glm::quat(startRotationQ.w, startRotationQ.x, startRotationQ.y, startRotationQ.z);
+    glm::quat endRotation = glm::quat(endRotationQ.w, endRotationQ.x, endRotationQ.y, endRotationQ.z);
+
+    // Use GLM's optimized quaternion interpolation
+    glm::quat result = glm::slerp(startRotation, endRotation, factor);
+
+    // Convert back to aiQuaternion
+    out = aiQuaternion(result.w, result.x, result.y, result.z);
 }
 
 void ModelLoader::calcInterpolatedPosition(aiVector3D& out, float animationTime, const aiNodeAnim* nodeAnim) {
