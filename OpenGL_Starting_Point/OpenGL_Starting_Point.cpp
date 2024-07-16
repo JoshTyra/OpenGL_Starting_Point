@@ -298,8 +298,11 @@ const char* boneTransformComputeShaderSource = R"(
     uniform int numAnimations;
     uniform int numNPCs;
 
+    shared mat4 sharedBoneTransforms[256];
+
     void main() {
         uint globalIndex = gl_GlobalInvocationID.x;
+        uint localIndex = gl_LocalInvocationID.x;
     
         if (globalIndex < numBones * numNPCs * numAnimations) {
             uint npcIndex = globalIndex / (numBones * numAnimations);
@@ -307,9 +310,16 @@ const char* boneTransformComputeShaderSource = R"(
             uint boneIndex = globalIndex % numBones;
         
             uint inIndex = npcIndex * numBones * numAnimations + animIndex * numBones + boneIndex;
-            uint outIndex = globalIndex;
         
-            animationMatrices[outIndex] = boneTransforms[inIndex];
+            // Load data into shared memory
+            sharedBoneTransforms[localIndex] = boneTransforms[inIndex];
+        }
+    
+        barrier();
+    
+        if (globalIndex < numBones * numNPCs * numAnimations) {
+            // Use data from shared memory
+            animationMatrices[globalIndex] = sharedBoneTransforms[localIndex];
         }
     }
 )";
