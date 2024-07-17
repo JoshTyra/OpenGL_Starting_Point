@@ -100,7 +100,7 @@ float idleAnimationChangeTimer = 0.0f;
 const float idleAnimationChangeInterval = 2.0f; // Minimum interval between idle animation changes in seconds
 bool idleAnimationSelected = false; // Add this flag at the top of your file
 
-NPCManager npcManager;
+NPCManager npcManager(NPCManager::MAX_NPCS);
 
 // Plane geometry shit
 unsigned int planeVAO, planeVBO;
@@ -751,21 +751,26 @@ int main() {
     std::vector<int> instanceIDs(NPCManager::MAX_NPCS);
 
     glm::mat4 originalModelMatrix = glm::mat4(1.0f);
-    originalModelMatrix = glm::rotate(originalModelMatrix, glm::radians(90.0f), glm::vec3(-1.0f, 0.0f, 0.0f)); // Original rotation
-    originalModelMatrix = glm::scale(originalModelMatrix, glm::vec3(0.025f)); // Original scaling
+    originalModelMatrix = glm::rotate(originalModelMatrix, glm::radians(90.0f), glm::vec3(-1.0f, 0.0f, 0.0f));
+    originalModelMatrix = glm::scale(originalModelMatrix, glm::vec3(0.025f));
 
     initializeNPCs();
 
+    BT::BehaviorTreeFactory factory;
+    BT::registerNodes(factory);
+    npcManager.setupBehaviorTrees(factory);
+
     const auto& npcs = npcManager.getNPCs();
     for (size_t i = 0; i < npcs.size(); ++i) {
-        instanceModels[i] = npcs[i].getModelMatrix();
-        instanceColors[i] = npcs[i].getColor();
-        instanceAnimationTimes[i] = npcs[i].getAnimationTime();
-        instanceStartFrames[i] = npcs[i].getStartFrame();
-        instanceEndFrames[i] = npcs[i].getEndFrame();
-        instanceIDs[i] = i;
+        instanceModels[i] = npcs[i]->getModelMatrix();
+        instanceColors[i] = npcs[i]->getColor();
+        instanceAnimationTimes[i] = npcs[i]->getAnimation().animationTime;
+        instanceStartFrames[i] = npcs[i]->getAnimation().startFrame;
+        instanceEndFrames[i] = npcs[i]->getAnimation().endFrame;
+        instanceIDs[i] = static_cast<int>(i);
     }
 
+    // The rest of the code remains the same
     unsigned int instanceVBO;
     glGenBuffers(1, &instanceVBO);
     glBindBuffer(GL_ARRAY_BUFFER, instanceVBO);
@@ -834,15 +839,6 @@ int main() {
         glBindVertexArray(0);
     }
 
-    // Initialize Behavior Tree Factory
-    BT::BehaviorTreeFactory factory;
-    BT::registerNodes(factory);
-
-    // Create a blackboard
-    auto blackboard = BT::Blackboard::create();
-
-    auto tree = factory.createTreeFromText(BT::getMainTreeXML(), blackboard);
-
     FrameTimeTracker frameTracker;
 
     // Main render loop
@@ -910,19 +906,17 @@ int main() {
         // Update UBOs
         updateUBOs(lightDir);
 
-        for (auto& npc : npcManager.getNPCs()) {  // Use non-const reference
-            blackboard->set("npc", &npc);  // Pass non-const pointer
-            auto status = tree.tickOnce();
-            npc.update(deltaTime);
-        }
+        // Update NPCs
+        npcManager.updateNPCs(deltaTime);
 
         // Update instance data for GPU
+        const auto& npcs = npcManager.getNPCs();
         for (size_t i = 0; i < npcs.size(); ++i) {
-            instanceModels[i] = npcs[i].getModelMatrix();
-            instanceColors[i] = npcs[i].getColor();
-            instanceAnimationTimes[i] = npcs[i].getAnimationTime();
-            instanceStartFrames[i] = npcs[i].getStartFrame();
-            instanceEndFrames[i] = npcs[i].getEndFrame();
+            instanceModels[i] = npcs[i]->getModelMatrix();
+            instanceColors[i] = npcs[i]->getColor();
+            instanceAnimationTimes[i] = npcs[i]->getAnimation().animationTime;
+            instanceStartFrames[i] = npcs[i]->getAnimation().startFrame;
+            instanceEndFrames[i] = npcs[i]->getAnimation().endFrame;
         }
 
         // Upload instance data to GPU
@@ -932,7 +926,6 @@ int main() {
         glBufferSubData(GL_ARRAY_BUFFER, animTimeOffset, sizeof(float) * NPCManager::MAX_NPCS, instanceAnimationTimes.data());
         glBufferSubData(GL_ARRAY_BUFFER, startFrameOffset, sizeof(float) * NPCManager::MAX_NPCS, instanceStartFrames.data());
         glBufferSubData(GL_ARRAY_BUFFER, endFrameOffset, sizeof(float) * NPCManager::MAX_NPCS, instanceEndFrames.data());
-        // Note: You don't need to update instance IDs every frame as they don't change
         glBindBuffer(GL_ARRAY_BUFFER, 0);
 
         // Update bone transforms and upload to TBO
@@ -973,14 +966,14 @@ int main() {
                 glUniform1i(glGetUniformLocation(characterShaderProgram, "cubemap"), 3);
             }
             else if (mesh.meshBufferIndex == 1) {
-                glUseProgram(visorShaderProgram); // Use the visor shader for the visor part
+                glUseProgram(visorShaderProgram);
                 glActiveTexture(GL_TEXTURE3);
                 glBindTexture(GL_TEXTURE_CUBE_MAP, visorCubemapTexture);
                 glUniform1i(glGetUniformLocation(visorShaderProgram, "visorCubemap"), 3);
             }
 
             glBindVertexArray(mesh.VAO);
-            glDrawElementsInstanced(GL_TRIANGLES, mesh.indices.size(), GL_UNSIGNED_INT, 0, NPCManager::MAX_NPCS);
+            glDrawElementsInstanced(GL_TRIANGLES, mesh.indices.size(), GL_UNSIGNED_INT, 0, npcManager.getNPCs().size());
         }
 
         // Render the plane
@@ -1098,10 +1091,27 @@ void updateNPCAnimations(float deltaTime) {
     std::vector<glm::mat4> allBoneTransforms;
 
     const auto& npcs = npcManager.getNPCs();
-    for (const auto& npc : npcs) {
+    for (size_t i = 0; i < npcs.size(); ++i) {
+        const auto& npc = npcs[i];
+
+        // Ensure valid animation data
+        if (npc->getAnimation().startFrame >= npc->getAnimation().endFrame) {
+            std::cerr << "Invalid animation frames for NPC " << i << std::endl;
+            continue;
+        }
+
+        if (std::isnan(npc->getAnimation().animationTime)) {
+            std::cerr << "Invalid animation time for NPC " << i << std::endl;
+            continue;
+        }
+
         std::vector<glm::mat4> npcBoneTransforms(modelLoader.getNumBones(), glm::mat4(1.0f));
-        modelLoader.updateBoneTransforms(npc.getAnimationTime(), animationNames[npc.getCurrentAnimationIndex()],
-            npc.getBlendFactor(), npc.getStartFrame(), npc.getEndFrame(), npcBoneTransforms);
+        modelLoader.updateBoneTransforms(npc->getAnimation().animationTime,
+            animationNames[npc->getAnimation().currentAnimationIndex],
+            npc->getAnimation().blendFactor,
+            npc->getAnimation().startFrame,
+            npc->getAnimation().endFrame,
+            npcBoneTransforms);
 
         allBoneTransforms.insert(allBoneTransforms.end(), npcBoneTransforms.begin(), npcBoneTransforms.end());
     }
@@ -1170,7 +1180,7 @@ void initializeNPCs() {
     originalModelMatrix = glm::rotate(originalModelMatrix, glm::radians(90.0f), glm::vec3(-1.0f, 0.0f, 0.0f));
     originalModelMatrix = glm::scale(originalModelMatrix, glm::vec3(0.025f));
 
-    npcManager.initializeNPCs(WORLD_SIZE, NPCManager::MAX_NPCS, originalModelMatrix);
+    npcManager.initializeNPCs(WORLD_SIZE, originalModelMatrix);
 }
 
 

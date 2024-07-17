@@ -15,8 +15,7 @@ namespace BT {
         NPC* npc = nullptr;
         if (getInput<NPC*>("npc", npc)) {
             if (npc != nullptr) {
-                npc->animation.startFrame = 0.0f;
-                npc->animation.endFrame = 58.0f;
+                npc->setAnimationFrames(0.0f, 58.0f);
                 return BT::NodeStatus::SUCCESS;
             }
         }
@@ -34,8 +33,7 @@ namespace BT {
         NPC* npc = nullptr;
         if (getInput<NPC*>("npc", npc)) {
             if (npc != nullptr) {
-                npc->animation.startFrame = 59.0f;
-                npc->animation.endFrame = 78.0f;
+                npc->setAnimationFrames(59.0f, 78.0f);
                 return BT::NodeStatus::SUCCESS;
             }
         }
@@ -56,11 +54,11 @@ namespace BT {
                 float currentTime = static_cast<float>(glfwGetTime());
                 if (glfwGetKey(glfwGetCurrentContext(), GLFW_KEY_R) == GLFW_PRESS) {
                     if (currentTime - lastToggleTime > toggleDelay) {
-                        npc->movement.isRunning = !npc->movement.isRunning;
+                        npc->setRunning(!npc->isRunning());
                         lastToggleTime = currentTime;
                     }
                 }
-                return npc->movement.isRunning ? BT::NodeStatus::SUCCESS : BT::NodeStatus::FAILURE;
+                return npc->isRunning() ? BT::NodeStatus::SUCCESS : BT::NodeStatus::FAILURE;
             }
         }
         return BT::NodeStatus::FAILURE;
@@ -74,20 +72,19 @@ namespace BT {
 
     const char* getMainTreeXML() {
         return R"(
-<root BTCPP_format="4">
-    <BehaviorTree ID="MainTree">
-        <Fallback name="root_fallback">
-            <Sequence name="running_sequence">
-                <ShouldRun npc="{npc}"/>
-                <Running npc="{npc}"/>
-            </Sequence>
-            <Sequence name="idle_sequence">
-                <Idle npc="{npc}"/>
-            </Sequence>
-        </Fallback>
-    </BehaviorTree>
-</root>
-)";
+        <root BTCPP_format="4">
+            <BehaviorTree ID="MainTree">
+                <Fallback name="root_fallback">
+                    <Sequence name="running_sequence">
+                        <ShouldRun npc="{npc}"/>
+                        <Running npc="{npc}"/>
+                    </Sequence>
+                    <Sequence name="idle_sequence">
+                        <Idle npc="{npc}"/>
+                    </Sequence>
+                </Fallback>
+            </BehaviorTree>
+        </root>
+        )";
     }
-
 } // namespace BT

@@ -2,77 +2,158 @@
 #pragma once
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
-#include <glm/gtx/rotate_vector.hpp>
 #include <vector>
 #include <string>
+#include <memory>
+#include <optional>
+#include <span>
+#include <behaviortree_cpp/bt_factory.h>
 
-class NPCAnimation {
-public:
-    float animationTime = 0.0f;
-    int currentAnimationIndex = 0;
-    float startFrame = 0.0f;
-    float endFrame = 58.0f;
-    float blendFactor = 0.0f;
+enum class NPCState {
+    Idle,
+    Moving,
+    Interacting,
+    Attacking,
+    Dead
+};
+
+enum class AnimationType {
+    Idle,
+    Walk,
+    Run,
+    Attack,
+    Die,
+    Interact
+};
+
+struct NPCStats {
+    float health{ 100.0f };
+    float speed{ 5.0f };
+    float attackPower{ 10.0f };
+    float defense{ 5.0f };
+};
+
+struct NPCAnimation {
+    float animationTime{ 0.0f };
+    int currentAnimationIndex{ 0 };
+    float startFrame{ 0.0f };
+    float endFrame{ 0.0f };
+    float blendFactor{ 0.0f };
 
     void update(float deltaTime);
     void setAnimation(int index, float start, float end);
 };
 
-class NPCMovement {
-public:
-    glm::vec3 position;
-    std::vector<glm::vec3> currentPath;
-    int currentPathIndex = 0;
-    glm::vec3 currentDestination;
-    float currentRotationAngle = 0.0f;
-    glm::mat4 currentRotationMatrix = glm::mat4(1.0f);
-    bool isRunning = false;
+struct NPCMovement {
+    glm::vec3 position{ 0.0f };
+    glm::vec3 velocity{ 0.0f };
+    glm::vec3 acceleration{ 0.0f };
+    float rotationAngle{ 0.0f };
+    glm::mat4 rotationMatrix{ 1.0f };
 
     void updatePosition(float deltaTime, float speed);
-    void setDestination(const glm::vec3& destination);
     void updateRotation(float deltaTime, float rotationSpeed);
 };
 
 class NPC {
 public:
-    NPCAnimation animation;
-    NPCMovement movement;
-    glm::mat4 modelMatrix;
-    glm::mat4 initialTransform;
-    glm::vec3 color;
-    float idleTimer = 0.0f;
-    int instanceID;
-
     NPC(int id, const glm::vec3& startPosition, const glm::mat4& initialTransform);
-    void update(float deltaTime);
-    glm::mat4 getModelMatrix() const;
-    glm::vec3 getColor() const { return color; }
-    float getAnimationTime() const { return animation.animationTime; }
-    float getStartFrame() const { return animation.startFrame; }
-    float getEndFrame() const { return animation.endFrame; }
-    int getCurrentAnimationIndex() const { return animation.currentAnimationIndex; }
-    float getBlendFactor() const { return animation.blendFactor; }
+    ~NPC() = default;
 
-    static glm::vec3 getRandomColor();
+    NPC(const NPC&) = delete;
+    NPC& operator=(const NPC&) = delete;
+    NPC(NPC&&) noexcept = default;
+    NPC& operator=(NPC&&) noexcept = default;
+
+    void update(float deltaTime);
+
+    void setState(NPCState newState);
+    [[nodiscard]] NPCState getState() const noexcept { return currentState; }
+
+    void setDestination(const glm::vec3& destination);
+    void stopMoving() noexcept;
+    [[nodiscard]] bool isMoving() const noexcept { return currentState == NPCState::Moving; }
+
+    void setAnimation(AnimationType type);
+    void updateAnimation(float deltaTime);
+    void setAnimationFrames(float start, float end);
+    bool isRunning() const { return currentState == NPCState::Moving; }
+    void setRunning(bool running);
+
+    void takeDamage(float amount);
+    void attack(NPC* target);
+    [[nodiscard]] bool isAlive() const noexcept { return stats.health > 0; }
+
+    void interact(NPC* other);
+
+    // Updated Behavior Tree methods
+    void setupBehaviorTree(BT::Tree tree);
+    void updateBehavior(float deltaTime);
+
+    [[nodiscard]] int getID() const noexcept { return instanceID; }
+    [[nodiscard]] const glm::mat4& getModelMatrix() const noexcept { return modelMatrix; }
+    [[nodiscard]] const glm::vec3& getPosition() const noexcept { return movement.position; }
+    [[nodiscard]] const glm::vec3& getColor() const noexcept { return color; }
+    [[nodiscard]] const NPCAnimation& getAnimation() const noexcept { return animation; }
+    [[nodiscard]] const NPCStats& getStats() const noexcept { return stats; }
+
+    void setPosition(const glm::vec3& newPosition) noexcept;
+    void setColor(const glm::vec3& newColor) noexcept { color = newColor; }
+    void setStats(const NPCStats& newStats) noexcept { stats = newStats; }
+
+    // Add this method to access the blackboard
+    [[nodiscard]] BT::Blackboard::Ptr getBlackboard() const noexcept { return blackboard; }
 
 private:
-    static glm::vec3 hexToRGB(const std::string& hex);
+    int instanceID;
+    NPCState currentState{ NPCState::Idle };
+    NPCAnimation animation;
+    NPCMovement movement;
+    NPCStats stats;
+    glm::mat4 modelMatrix{ 1.0f };
+    glm::mat4 initialTransform;
+    glm::vec3 color;
+
+    // Updated Behavior Tree members
+    BT::Tree behaviorTree;
+    BT::Blackboard::Ptr blackboard;
+
+    std::vector<glm::vec3> currentPath;
+    size_t currentPathIndex{ 0 };
+
+    void updateModelMatrix() noexcept;
+    void updatePathFinding(float deltaTime);
+    static glm::vec3 getRandomColor();
 };
 
 class NPCManager {
 public:
-    #ifdef _DEBUG
-        static const int MAX_NPCS = 8;
-    #else
-        static const int MAX_NPCS = 200;
-    #endif
+    static constexpr size_t MAX_NPCS = 8;
 
-    NPCManager();
-    void initializeNPCs(float worldSize, int numInstances, const glm::mat4& originalModelMatrix);
+    explicit NPCManager(size_t maxNPCs = MAX_NPCS);
+    ~NPCManager() = default;
+
+    NPCManager(const NPCManager&) = delete;
+    NPCManager& operator=(const NPCManager&) = delete;
+    NPCManager(NPCManager&&) noexcept = default;
+    NPCManager& operator=(NPCManager&&) noexcept = default;
+
+    void initializeNPCs(float worldSize, const glm::mat4& originalModelMatrix);
     void updateNPCs(float deltaTime);
-    std::vector<NPC>& getNPCs() { return npcs; }  // Non-const version
-    const std::vector<NPC>& getNPCs() const { return npcs; }  // Const version for const contexts
+    void setupBehaviorTrees(BT::BehaviorTreeFactory& factory);
+
+    void addNPC(const glm::vec3& position, const glm::mat4& initialTransform);
+    void removeNPC(int id);
+    [[nodiscard]] NPC* getNPC(int id);
+    [[nodiscard]] std::span<const std::unique_ptr<NPC>> getNPCs() const noexcept { return npcs; }
+
+    void handleNPCInteractions();
+    void updatePathfinding();
 
 private:
-    std::vector<NPC> npcs;
+    std::vector<std::unique_ptr<NPC>> npcs;
+    size_t maxNPCs;
+    float worldSize{ 0.0f };
+
+    void cleanupDeadNPCs();
 };
