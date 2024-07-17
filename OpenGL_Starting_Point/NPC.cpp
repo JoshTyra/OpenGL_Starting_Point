@@ -81,7 +81,7 @@ void NPC::setAnimation(AnimationType type) {
     case AnimationType::Idle:
         animation.setAnimation(0, 0.0f, 58.0f);
         break;
-    case AnimationType::Walk:
+    case AnimationType::Run:
         animation.setAnimation(1, 59.0f, 78.0f);
         break;
         // Add cases for other animation types

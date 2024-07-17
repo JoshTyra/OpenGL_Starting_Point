@@ -128,7 +128,11 @@ private:
 
 class NPCManager {
 public:
+    #ifdef _DEBUG
     static constexpr size_t MAX_NPCS = 8;
+    #else
+    static constexpr size_t MAX_NPCS = 200;
+    #endif
 
     explicit NPCManager(size_t maxNPCs = MAX_NPCS);
     ~NPCManager() = default;
