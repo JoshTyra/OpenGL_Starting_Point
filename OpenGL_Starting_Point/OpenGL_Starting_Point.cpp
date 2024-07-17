@@ -26,6 +26,7 @@
 #include "backends/imgui_impl_opengl3.h"
 #include "BehaviorTrees.h"
 #include "NPC.h"
+#include "FrameTimeTracker.h"
 
 // Constants and global variables
 const int WIDTH = 2560;
@@ -842,8 +843,11 @@ int main() {
 
     auto tree = factory.createTreeFromText(BT::getMainTreeXML(), blackboard);
 
+    FrameTimeTracker frameTracker;
+
     // Main render loop
     while (!glfwWindowShouldClose(window)) {
+        frameTracker.update();
         float currentFrame = static_cast<float>(glfwGetTime());
         deltaTime = currentFrame - lastFrame;
         lastFrame = currentFrame;
@@ -854,8 +858,12 @@ int main() {
 
         // Update FPS every second
         if (elapsedTime >= 1.0) {
-            double fps = frameCount / elapsedTime;
-            std::string title = "OpenGL Basic Application - FPS: " + std::to_string(fps);
+            double avgFPS = 1000.0 / frameTracker.getAverageFrameTime();
+            double minFPS = 1000.0 / frameTracker.getMaxFrameTime();
+            double maxFPS = 1000.0 / frameTracker.getMinFrameTime();
+            std::string title = "OpenGL Basic Application - Avg FPS: " + std::to_string(avgFPS) +
+                " Min: " + std::to_string(minFPS) +
+                " Max: " + std::to_string(maxFPS);
             glfwSetWindowTitle(window, title.c_str());
 
             // Reset for the next second
