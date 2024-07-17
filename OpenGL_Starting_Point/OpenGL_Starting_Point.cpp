@@ -263,8 +263,8 @@ const char* characterVertexShaderSource = R"(
     layout(location = 2) in vec3 aNormal;
     layout(location = 3) in vec3 aTangent;
     layout(location = 4) in vec3 aBitangent;
-    layout(location = 5) in ivec4 aBoneIDs;
-    layout(location = 6) in vec4 aWeights;
+    layout(location = 5) in ivec2 aBoneIDs;  // Changed from ivec4
+    layout(location = 6) in vec2 aWeights;   // Changed from vec4
     layout(location = 7) in mat4 instanceModel;
     layout(location = 11) in vec3 instanceColor;
     layout(location = 12) in float instanceAnimationTime;
@@ -284,11 +284,11 @@ const char* characterVertexShaderSource = R"(
 
     #define NUM_BONES 31 // Adjust this to match the maximum required per mesh
 
-    mat4 calculateBoneTransform(ivec4 boneIDs, vec4 weights, int instanceID) {
+    mat4 calculateBoneTransform(ivec2 boneIDs, vec2 weights, int instanceID) {
         mat4 boneTransform = mat4(0.0);
         int boneOffset = instanceID * NUM_BONES * 4;
 
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < 2; ++i) {
             if (weights[i] > 0.0) {
                 int index = boneOffset + boneIDs[i] * 4;
                 mat4 boneMatrix = mat4(
@@ -429,9 +429,12 @@ const char* visorFragmentShaderSource = R"(
     layout(binding = 1) uniform sampler2D texture_normal;
     layout(binding = 3) uniform samplerCube visorCubemap;
 
+    uniform float normalMapStrength = 0.4f;
+
     void main() {
         vec3 normal = texture(texture_normal, TexCoord).rgb * 2.0 - 1.0;
         normal.y = -normal.y;
+        normal.xy *= normalMapStrength; // Use the normal map strength uniform
         normal = normalize(normal);
 
         vec4 diffuseTexture = texture(texture_diffuse, TexCoord);
@@ -1128,10 +1131,10 @@ void updateUBOs(const glm::vec3& lightDir) {
     // Update Light UBO
     LightData lightData;
     lightData.lightDir = lightDir;
-    lightData.ambientColor = glm::vec3(0.4f, 0.4f, 0.4f);
+    lightData.ambientColor = glm::vec3(0.45f, 0.45f, 0.45f);
     lightData.diffuseColor = glm::vec3(1.0f, 1.0f, 1.0f);
     lightData.specularColor = glm::vec3(0.6f, 0.6f, 0.6f);
-    lightData.lightIntensity = 1.25f;
+    lightData.lightIntensity = 1.0f;
     lightData.shininess = 16.0f;
 
     glBindBuffer(GL_UNIFORM_BUFFER, lightUBO);

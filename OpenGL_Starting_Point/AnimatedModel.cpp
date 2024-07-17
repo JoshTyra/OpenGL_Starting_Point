@@ -19,24 +19,10 @@ ModelLoader::ModelLoader()
 ModelLoader::~ModelLoader() {}
 
 void normalizeWeights(Vertex& vertex) {
-    float totalWeight = vertex.Weights[0] + vertex.Weights[1] + vertex.Weights[2] + vertex.Weights[3];
+    float totalWeight = vertex.Weights[0] + vertex.Weights[1];
     if (totalWeight > 0.0f) {
         vertex.Weights[0] /= totalWeight;
         vertex.Weights[1] /= totalWeight;
-        vertex.Weights[2] /= totalWeight;
-        vertex.Weights[3] /= totalWeight;
-    }
-}
-
-// Function to print bone information
-void printBoneInfo(const aiScene* scene) {
-    for (unsigned int i = 0; i < scene->mNumMeshes; ++i) {
-        aiMesh* mesh = scene->mMeshes[i];
-        std::cout << "Mesh " << i << " has " << mesh->mNumBones << " bones.\n";
-        for (unsigned int j = 0; j < mesh->mNumBones; ++j) {
-            aiBone* bone = mesh->mBones[j];
-            std::cout << "Bone " << j << ": " << bone->mName.C_Str() << "\n";
-        }
     }
 }
 
@@ -49,8 +35,6 @@ void ModelLoader::loadModel(const std::string& path) {
     }
 
     std::cout << "Model loaded successfully." << std::endl;
-
-    printBoneInfo(scene);
 
     if (scene->mNumAnimations > 0) {
         std::cout << "Number of animations: " << scene->mNumAnimations << std::endl;
@@ -159,7 +143,7 @@ void ModelLoader::processMesh(aiMesh* mesh, const aiScene* scene, const aiMatrix
             int vertexID = bone->mWeights[j].mVertexId;
             float weight = bone->mWeights[j].mWeight;
 
-            for (int k = 0; k < 4; ++k) {
+            for (int k = 0; k < 2; ++k) {  // Changed from 4 to 2
                 if (vertices[vertexID].Weights[k] == 0.0f) {
                     vertices[vertexID].BoneIDs[k] = boneIndex;
                     vertices[vertexID].Weights[k] = weight;
@@ -251,7 +235,12 @@ void ModelLoader::readNodeHierarchy(float animationTime, const aiNode* node, con
 
         aiQuaternion rotationQ;
         calcInterpolatedRotation(rotationQ, animationTime, nodeAnim);
-        glm::mat4 rotationM = glm::mat4_cast(glm::quat(rotationQ.w, rotationQ.x, rotationQ.y, rotationQ.z));
+
+        // Convert aiQuaternion to glm::quat
+        glm::quat rotation = glm::quat(rotationQ.w, rotationQ.x, rotationQ.y, rotationQ.z);
+
+        // Use optimized conversion from quaternion to matrix
+        glm::mat4 rotationM = glm::mat4_cast(rotation);
 
         aiVector3D translation;
         calcInterpolatedPosition(translation, animationTime, nodeAnim);
@@ -308,13 +297,23 @@ void ModelLoader::calcInterpolatedRotation(aiQuaternion& out, float animationTim
     unsigned int rotationIndex = findRotation(animationTime, nodeAnim);
     unsigned int nextRotationIndex = (rotationIndex + 1);
     assert(nextRotationIndex < nodeAnim->mNumRotationKeys);
+
     float deltaTime = (float)(nodeAnim->mRotationKeys[nextRotationIndex].mTime - nodeAnim->mRotationKeys[rotationIndex].mTime);
     float factor = (animationTime - (float)nodeAnim->mRotationKeys[rotationIndex].mTime) / deltaTime;
     assert(factor >= 0.0f && factor <= 1.0f);
+
     const aiQuaternion& startRotationQ = nodeAnim->mRotationKeys[rotationIndex].mValue;
     const aiQuaternion& endRotationQ = nodeAnim->mRotationKeys[nextRotationIndex].mValue;
-    aiQuaternion::Interpolate(out, startRotationQ, endRotationQ, factor);
-    out = out.Normalize();
+
+    // Convert aiQuaternion to glm::quat
+    glm::quat startRotation = glm::quat(startRotationQ.w, startRotationQ.x, startRotationQ.y, startRotationQ.z);
+    glm::quat endRotation = glm::quat(endRotationQ.w, endRotationQ.x, endRotationQ.y, endRotationQ.z);
+
+    // Fast approximation of slerp
+    glm::quat result = fastSlerp(startRotation, endRotation, factor);
+
+    // Convert back to aiQuaternion
+    out = aiQuaternion(result.w, result.x, result.y, result.z);
 }
 
 void ModelLoader::calcInterpolatedPosition(aiVector3D& out, float animationTime, const aiNodeAnim* nodeAnim) {
@@ -493,4 +492,28 @@ GLuint ModelLoader::getBoneTransformsTBO() const {
 
 size_t ModelLoader::getNumBones() const {
     return boneInfo.size();
+}
+
+glm::quat ModelLoader::fastSlerp(const glm::quat& start, const glm::quat& end, float t) {
+    // Compute the cosine of the angle between the two vectors
+    float cosTheta = glm::dot(start, end);
+
+    // If the dot product is negative, slerp won't take the shorter path
+    // Fix by reversing one quaternion
+    glm::quat end2 = end;
+    if (cosTheta < 0.0f) {
+        end2 = -end;
+        cosTheta = -cosTheta;
+    }
+
+    // Perform a linear interpolation when cosTheta is close to 1 to avoid side effect of sin(angle) becoming a zero denominator
+    if (cosTheta > 0.9999f) {
+        // Linear interpolation
+        return glm::normalize(glm::mix(start, end2, t));
+    }
+    else {
+        // Essential Mathematics, p. 467
+        float angle = acos(cosTheta);
+        return (start * sin((1.0f - t) * angle) + end2 * sin(t * angle)) / sin(angle);
+    }
 }

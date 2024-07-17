@@ -61,7 +61,11 @@ private:
 
 class NPCManager {
 public:
-    static const int MAX_NPCS = 8; // Adjust as needed
+    #ifdef _DEBUG
+        static const int MAX_NPCS = 8;
+    #else
+        static const int MAX_NPCS = 125;
+    #endif
 
     NPCManager();
     void initializeNPCs(float worldSize, int numInstances, const glm::mat4& originalModelMatrix);

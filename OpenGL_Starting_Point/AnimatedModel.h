@@ -21,8 +21,8 @@ struct Vertex {
     glm::vec3 Normal;
     glm::vec3 Tangent;
     glm::vec3 Bitangent;
-    glm::ivec4 BoneIDs;
-    glm::vec4 Weights;
+    glm::ivec2 BoneIDs;  // Changed from ivec4 to ivec2
+    glm::vec2 Weights;   // Changed from vec4 to vec2
 };
 
 struct BoneInfo {
@@ -31,6 +31,7 @@ struct BoneInfo {
 
     BoneInfo() : BoneOffset(1.0f), FinalTransformation(1.0f) {}
 };
+
 struct Animation {
     std::string name;
     double duration;
@@ -91,6 +92,7 @@ private:
     unsigned int findPosition(float animationTime, const aiNodeAnim* nodeAnim);
     AABB computeAABB(const std::vector<Vertex>& vertices);
     AABB transformAABB(const AABB& aabb, const glm::mat4& transform);
+    glm::quat fastSlerp(const glm::quat& start, const glm::quat& end, float t);
 
     std::vector<Vertex> aggregatedVertices;
     std::vector<Mesh> loadedMeshes;
