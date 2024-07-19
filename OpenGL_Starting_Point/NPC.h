@@ -68,29 +68,28 @@ public:
     void update(float deltaTime);
 
     void setState(NPCState newState);
-    [[nodiscard]] NPCState getState() const noexcept { return currentState; }
+    [[nodiscard]] constexpr NPCState getState() const noexcept { return currentState; }
 
     void setDestination(const glm::vec3& destination);
     void stopMoving() noexcept;
-    [[nodiscard]] bool isMoving() const noexcept { return currentState == NPCState::Moving; }
+    [[nodiscard]] constexpr bool isMoving() const noexcept { return currentState == NPCState::Moving; }
 
     void setAnimation(AnimationType type);
     void updateAnimation(float deltaTime);
     void setAnimationFrames(float start, float end);
-    bool isRunning() const { return currentState == NPCState::Moving; }
+    [[nodiscard]] constexpr bool isRunning() const noexcept { return currentState == NPCState::Moving; }
     void setRunning(bool running);
 
     void takeDamage(float amount);
     void attack(NPC* target);
-    [[nodiscard]] bool isAlive() const noexcept { return stats.health > 0; }
+    [[nodiscard]] constexpr bool isAlive() const noexcept { return stats.health > 0; }
 
     void interact(NPC* other);
 
-    // Updated Behavior Tree methods
     void setupBehaviorTree(BT::Tree tree);
     void updateBehavior(float deltaTime);
 
-    [[nodiscard]] int getID() const noexcept { return instanceID; }
+    [[nodiscard]] constexpr int getID() const noexcept { return instanceID; }
     [[nodiscard]] const glm::mat4& getModelMatrix() const noexcept { return modelMatrix; }
     [[nodiscard]] const glm::vec3& getPosition() const noexcept { return movement.position; }
     [[nodiscard]] const glm::vec3& getColor() const noexcept { return color; }
@@ -101,20 +100,18 @@ public:
     void setColor(const glm::vec3& newColor) noexcept { color = newColor; }
     void setStats(const NPCStats& newStats) noexcept { stats = newStats; }
 
-    // Add this method to access the blackboard
     [[nodiscard]] BT::Blackboard::Ptr getBlackboard() const noexcept { return blackboard; }
 
 private:
-    int instanceID;
+    const int instanceID;
     NPCState currentState{ NPCState::Idle };
     NPCAnimation animation;
     NPCMovement movement;
     NPCStats stats;
     glm::mat4 modelMatrix{ 1.0f };
-    glm::mat4 initialTransform;
+    const glm::mat4 initialTransform;
     glm::vec3 color;
 
-    // Updated Behavior Tree members
     BT::Tree behaviorTree;
     BT::Blackboard::Ptr blackboard;
 
@@ -128,11 +125,12 @@ private:
 
 class NPCManager {
 public:
-    #ifdef _DEBUG
-    static constexpr size_t MAX_NPCS = 8;
-    #else
-    static constexpr size_t MAX_NPCS = 200;
-    #endif
+    static constexpr size_t MAX_NPCS =
+#ifdef _DEBUG
+        8;
+#else
+        200;
+#endif
 
     explicit NPCManager(size_t maxNPCs = MAX_NPCS);
     ~NPCManager() = default;
@@ -156,7 +154,7 @@ public:
 
 private:
     std::vector<std::unique_ptr<NPC>> npcs;
-    size_t maxNPCs;
+    const size_t maxNPCs;
     float worldSize{ 0.0f };
 
     void cleanupDeadNPCs();
