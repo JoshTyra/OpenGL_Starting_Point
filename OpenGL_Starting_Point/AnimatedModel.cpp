@@ -4,17 +4,17 @@ ModelLoader::ModelLoader()
     : numBones(0), scene(nullptr), currentAnimation(nullptr),
     currentHeadRotation(glm::quat(1.0f, 0.0f, 0.0f, 0.0f)),
     targetHeadRotation(glm::quat(1.0f, 0.0f, 0.0f, 0.0f)),
+    headRotationDuration(HEAD_ROTATION_DURATION),
     headRotationTimer(0.0f),
     headRotationElapsedTime(0.0f),
-    headRotationDuration(3.0f),  // Change head rotation duration as needed
     headRotationInProgress(false),
-    headPoses({
-        glm::vec2(0.0f, 0.0f),  // Neutral pose
-        glm::vec2(glm::radians(45.0f), glm::radians(5.0f)),  // Slight right tilt
-        glm::vec2(glm::radians(-45.0f), glm::radians(-5.0f)),  // Slight left tilt
-        glm::vec2(glm::radians(30.0f), glm::radians(10.0f)),  // Slight upward tilt
-        glm::vec2(glm::radians(-30.0f), glm::radians(-10.0f))  // Slight downward tilt
-        }) {}
+    headPoses{ {
+        {0.0f, 0.0f},
+        {glm::radians(45.0f), glm::radians(5.0f)},
+        {glm::radians(-45.0f), glm::radians(-5.0f)},
+        {glm::radians(30.0f), glm::radians(10.0f)},
+        {glm::radians(-30.0f), glm::radians(-10.0f)}
+    } } {}
 
 ModelLoader::~ModelLoader() {}
 
@@ -27,6 +27,7 @@ void normalizeWeights(Vertex& vertex) {
 }
 
 void ModelLoader::loadModel(const std::string& path) {
+    // The importer will manage the scene's memory
     scene = importer.ReadFile(path, aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_CalcTangentSpace);
 
     if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode) {
@@ -51,7 +52,7 @@ void ModelLoader::loadModel(const std::string& path) {
     loadedModelAABB = computeAABB(aggregatedVertices);
 }
 
-void ModelLoader::updateBoneTransforms(float timeInSeconds, const std::string& animationName, float blendFactor, float startFrame, float endFrame, std::vector<glm::mat4>& outBoneTransforms) {
+void ModelLoader::updateBoneTransforms(float timeInSeconds, std::string_view animationName, float blendFactor, float startFrame, float endFrame, std::vector<glm::mat4>& outBoneTransforms) {
     if (!scene || animationName.empty()) {
         outBoneTransforms.resize(boneInfo.size(), glm::mat4(1.0f));
         std::cout << "No scene or empty animation name" << std::endl;
@@ -61,7 +62,7 @@ void ModelLoader::updateBoneTransforms(float timeInSeconds, const std::string& a
     glm::mat4 identity = glm::mat4(1.0f);
     std::vector<glm::mat4> blendedBoneTransforms(boneInfo.size(), glm::mat4(0.0f));
 
-    auto it = animations.find(animationName);
+    auto it = animations.find(std::string(animationName));
     if (it == animations.end()) {
         outBoneTransforms.resize(boneInfo.size(), glm::mat4(1.0f));
         return;
@@ -77,11 +78,11 @@ void ModelLoader::updateBoneTransforms(float timeInSeconds, const std::string& a
     outBoneTransforms = currentBoneTransforms;
 }
 
-const std::vector<Mesh>& ModelLoader::getLoadedMeshes() const {
+const std::vector<Mesh>& ModelLoader::getLoadedMeshes() const noexcept {
     return loadedMeshes;
 }
 
-const AABB& ModelLoader::getLoadedModelAABB() const {
+const AABB& ModelLoader::getLoadedModelAABB() const noexcept {
     return loadedModelAABB;
 }
 
@@ -169,7 +170,7 @@ void ModelLoader::processMesh(aiMesh* mesh, const aiScene* scene, const aiMatrix
     storeMesh(vertices, indices, meshBufferIndex);
 }
 
-void ModelLoader::storeMesh(const std::vector<Vertex>& vertices, const std::vector<unsigned int>& indices, int meshBufferIndex) {
+void ModelLoader::storeMesh(std::span<const Vertex> vertices, std::span<const unsigned int> indices, int meshBufferIndex) {
     Mesh mesh;
 
     glGenVertexArrays(1, &mesh.VAO);
@@ -215,15 +216,15 @@ void ModelLoader::storeMesh(const std::vector<Vertex>& vertices, const std::vect
     glBindVertexArray(0);
 
     mesh.meshBufferIndex = meshBufferIndex;
-    mesh.indices = indices;
+    mesh.indices.assign(indices.begin(), indices.end());
     loadedMeshes.push_back(mesh);
 }
 
-void ModelLoader::readNodeHierarchy(float animationTime, const aiNode* node, const glm::mat4& parentTransform, const std::string& animationName, float startFrame, float endFrame, std::vector<glm::mat4>& outBoneTransforms) {
+void ModelLoader::readNodeHierarchy(float animationTime, const aiNode* node, const glm::mat4& parentTransform, std::string_view animationName, float startFrame, float endFrame, std::vector<glm::mat4>& outBoneTransforms) {
     std::string nodeName(node->mName.data);
 
     glm::mat4 nodeTransformation = glm::transpose(glm::make_mat4(&node->mTransformation.a1));
-    const aiNodeAnim* nodeAnim = findNodeAnim(animations[animationName], nodeName);
+    const aiNodeAnim* nodeAnim = findNodeAnim(animations[std::string(animationName)], nodeName);
 
     if (nodeAnim) {
         // Ensure animationTime is within the correct range
@@ -433,14 +434,14 @@ void ModelLoader::processAnimations() {
     }
 }
 
-void ModelLoader::setCurrentAnimation(const std::string& name) {
-    auto it = animations.find(name);
+void ModelLoader::setCurrentAnimation(std::string_view name) {
+    auto it = animations.find(std::string(name));
     if (it != animations.end()) {
         currentAnimation = &it->second;
     }
     else {
         std::cerr << "Animation " << name << " not found." << std::endl;
-        currentAnimation = nullptr; // Set to nullptr if the animation is not found
+        currentAnimation.reset();
     }
 }
 
@@ -486,11 +487,11 @@ void ModelLoader::setBoneTransformsTBO(GLuint tbo, GLuint tboTexture) {
     boneTransformsTBOTexture = tboTexture;
 }
 
-GLuint ModelLoader::getBoneTransformsTBO() const {
+GLuint ModelLoader::getBoneTransformsTBO() const noexcept {
     return boneTransformsTBO;
 }
 
-size_t ModelLoader::getNumBones() const {
+size_t ModelLoader::getNumBones() const noexcept {
     return boneInfo.size();
 }
 

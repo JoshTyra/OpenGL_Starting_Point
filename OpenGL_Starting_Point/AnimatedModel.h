@@ -8,11 +8,17 @@
 #include <assimp/postprocess.h>
 #include <vector>
 #include <map>
+#include <unordered_map>
 #include <string>
+#include <string_view>
+#include <optional>
+#include <array>
+#include <span>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/string_cast.hpp>
+#include <glm/gtc/quaternion.hpp>
 #include <iostream>
 
 struct Vertex {
@@ -64,16 +70,16 @@ public:
     ~ModelLoader();
 
     void loadModel(const std::string& path);
-    void updateBoneTransforms(float timeInSeconds, const std::string& animationName, float blendFactor, float startFrame, float endFrame, std::vector<glm::mat4>& outBoneTransforms);
-    void setCurrentAnimation(const std::string& name);
-    const std::vector<Mesh>& getLoadedMeshes() const;
-    const AABB& getLoadedModelAABB() const;
+    void updateBoneTransforms(float timeInSeconds, std::string_view animationName, float blendFactor, float startFrame, float endFrame, std::vector<glm::mat4>& outBoneTransforms);
+    void setCurrentAnimation(std::string_view name);
+    [[nodiscard]] const std::vector<Mesh>& getLoadedMeshes() const noexcept;
+    [[nodiscard]] const AABB& getLoadedModelAABB() const noexcept;
     const std::vector<glm::mat4>& getBoneTransforms() const;
     void processAnimations();
     void updateHeadRotation(float deltaTime, const std::string& animationName, int currentAnimationIndex);
     void setBoneTransformsTBO(GLuint tbo, GLuint tboTexture);
-    GLuint getBoneTransformsTBO() const;
-    size_t getNumBones() const;
+    [[nodiscard]] GLuint getBoneTransformsTBO() const noexcept;
+    [[nodiscard]] size_t getNumBones() const noexcept;
 
     GLuint boneTransformsTBO;
     GLuint boneTransformsTBOTexture;
@@ -81,8 +87,8 @@ public:
 private:
     void processNode(aiNode* node, const aiScene* scene);
     void processMesh(aiMesh* mesh, const aiScene* scene, const aiMatrix4x4& nodeTransformation);
-    void storeMesh(const std::vector<Vertex>& vertices, const std::vector<unsigned int>& indices, int meshBufferIndex);
-    void readNodeHierarchy(float animationTime, const aiNode* node, const glm::mat4& parentTransform, const std::string& animationName, float startFrame, float endFrame, std::vector<glm::mat4>& outBoneTransforms);
+    void storeMesh(std::span<const Vertex> vertices, std::span<const unsigned int> indices, int meshBufferIndex);
+    void readNodeHierarchy(float animationTime, const aiNode* node, const glm::mat4& parentTransform, std::string_view animationName, float startFrame, float endFrame, std::vector<glm::mat4>& outBoneTransforms);
     const aiNodeAnim* findNodeAnim(const Animation& animation, const std::string& nodeName);
     void calcInterpolatedScaling(aiVector3D& out, float animationTime, const aiNodeAnim* nodeAnim);
     void calcInterpolatedRotation(aiQuaternion& out, float animationTime, const aiNodeAnim* nodeAnim);
@@ -97,14 +103,14 @@ private:
     std::vector<Vertex> aggregatedVertices;
     std::vector<Mesh> loadedMeshes;
     AABB loadedModelAABB;
-    std::map<std::string, int> boneMapping;
+    std::unordered_map<std::string, int> boneMapping;
     std::vector<BoneInfo> boneInfo;
     int numBones;
     std::vector<glm::mat4> boneTransforms;
     const aiScene* scene;
     Assimp::Importer importer;
-    std::map<std::string, Animation> animations;
-    Animation* currentAnimation;
+    std::unordered_map<std::string, Animation> animations;
+    std::optional<Animation*> currentAnimation;
 
     glm::quat currentHeadRotation;
     glm::quat targetHeadRotation;
@@ -112,7 +118,8 @@ private:
     float headRotationElapsedTime;
     float headRotationDuration;
     bool headRotationInProgress;
-    std::vector<glm::vec2> headPoses;
+    std::array<glm::vec2, 5> headPoses;
+    static constexpr float HEAD_ROTATION_DURATION = 3.0f;
 };
 
 #endif // MODELLOADER_H
