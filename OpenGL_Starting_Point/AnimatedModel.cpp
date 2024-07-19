@@ -14,7 +14,9 @@ ModelLoader::ModelLoader()
         {glm::radians(-45.0f), glm::radians(-5.0f)},
         {glm::radians(30.0f), glm::radians(10.0f)},
         {glm::radians(-30.0f), glm::radians(-10.0f)}
-    } } {}
+    } },
+    previousBoneTransforms(31, glm::mat4(1.0f))  // Initialize with identity matrices
+{}
 
 ModelLoader::~ModelLoader() {}
 
@@ -55,12 +57,8 @@ void ModelLoader::loadModel(const std::string& path) {
 void ModelLoader::updateBoneTransforms(float timeInSeconds, std::string_view animationName, float blendFactor, float startFrame, float endFrame, std::vector<glm::mat4>& outBoneTransforms) {
     if (!scene || animationName.empty()) {
         outBoneTransforms.resize(boneInfo.size(), glm::mat4(1.0f));
-        std::cout << "No scene or empty animation name" << std::endl;
         return;
     }
-
-    glm::mat4 identity = glm::mat4(1.0f);
-    std::vector<glm::mat4> blendedBoneTransforms(boneInfo.size(), glm::mat4(0.0f));
 
     auto it = animations.find(std::string(animationName));
     if (it == animations.end()) {
@@ -73,9 +71,23 @@ void ModelLoader::updateBoneTransforms(float timeInSeconds, std::string_view ani
     float localAnimationTime = startFrame + fmod(timeInSeconds * animation.ticksPerSecond, animationDuration);
 
     std::vector<glm::mat4> currentBoneTransforms(boneInfo.size(), glm::mat4(1.0f));
-    readNodeHierarchy(localAnimationTime, scene->mRootNode, identity, animationName, startFrame, endFrame, currentBoneTransforms);
+    readNodeHierarchy(localAnimationTime, scene->mRootNode, glm::mat4(1.0f), animationName, startFrame, endFrame, currentBoneTransforms);
 
-    outBoneTransforms = currentBoneTransforms;
+    // Blend between previous and current bone transforms
+    outBoneTransforms.resize(boneInfo.size());
+    for (size_t i = 0; i < boneInfo.size(); ++i) {
+        for (int row = 0; row < 4; ++row) {
+            for (int col = 0; col < 4; ++col) {
+                outBoneTransforms[i][row][col] = (1.0f - blendFactor) * previousBoneTransforms[i][row][col] +
+                    blendFactor * currentBoneTransforms[i][row][col];
+            }
+        }
+    }
+
+    // Store current transforms for next frame's blending
+    if (blendFactor >= 1.0f) {
+        previousBoneTransforms = currentBoneTransforms;
+    }
 }
 
 const std::vector<Mesh>& ModelLoader::getLoadedMeshes() const noexcept {

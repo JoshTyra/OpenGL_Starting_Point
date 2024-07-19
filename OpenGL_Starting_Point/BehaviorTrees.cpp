@@ -15,7 +15,7 @@ namespace BT {
         NPC* npc = nullptr;
         if (getInput<NPC*>("npc", npc)) {
             if (npc != nullptr) {
-                npc->setAnimationFrames(0.0f, 58.0f);
+                npc->setAnimation(AnimationType::Idle);
                 return BT::NodeStatus::SUCCESS;
             }
         }
@@ -33,7 +33,7 @@ namespace BT {
         NPC* npc = nullptr;
         if (getInput<NPC*>("npc", npc)) {
             if (npc != nullptr) {
-                npc->setAnimationFrames(59.0f, 78.0f);
+                npc->setAnimation(AnimationType::Run);
                 return BT::NodeStatus::SUCCESS;
             }
         }

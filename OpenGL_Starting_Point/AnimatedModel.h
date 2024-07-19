@@ -107,6 +107,7 @@ private:
     std::vector<BoneInfo> boneInfo;
     int numBones;
     std::vector<glm::mat4> boneTransforms;
+    std::vector<glm::mat4> previousBoneTransforms;
     const aiScene* scene;
     Assimp::Importer importer;
     std::unordered_map<std::string, Animation> animations;

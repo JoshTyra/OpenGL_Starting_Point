@@ -1095,17 +1095,6 @@ void updateNPCAnimations(float deltaTime) {
     for (size_t i = 0; i < npcs.size(); ++i) {
         const auto& npc = npcs[i];
 
-        // Ensure valid animation data
-        if (npc->getAnimation().startFrame >= npc->getAnimation().endFrame) {
-            std::cerr << "Invalid animation frames for NPC " << i << std::endl;
-            continue;
-        }
-
-        if (std::isnan(npc->getAnimation().animationTime)) {
-            std::cerr << "Invalid animation time for NPC " << i << std::endl;
-            continue;
-        }
-
         std::vector<glm::mat4> npcBoneTransforms(modelLoader.getNumBones(), glm::mat4(1.0f));
         modelLoader.updateBoneTransforms(npc->getAnimation().animationTime,
             animationNames[npc->getAnimation().currentAnimationIndex],

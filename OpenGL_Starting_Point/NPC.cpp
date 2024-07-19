@@ -30,6 +30,12 @@ void NPC::update(float deltaTime) {
         animation.animationTime = animation.startFrame + std::fmod(animation.animationTime - animation.startFrame, animation.endFrame - animation.startFrame);
     }
 
+    // Update blend factor
+    const float blendDuration = 0.25f;
+    if (animation.blendFactor < 1.0f) {
+        animation.blendFactor = std::min(animation.blendFactor + deltaTime / blendDuration, 1.0f);
+    }
+
     updatePathFinding(deltaTime);
     updateModelMatrix();
 }
@@ -77,14 +83,33 @@ void NPC::stopMoving() noexcept {
 }
 
 void NPC::setAnimation(AnimationType type) {
+    int newAnimationIndex = -1;
+    float newStartFrame = 0.0f, newEndFrame = 0.0f;
+
     switch (type) {
     case AnimationType::Idle:
-        animation.setAnimation(0, 0.0f, 58.0f);
+        newAnimationIndex = 0;
+        newStartFrame = 0.0f;
+        newEndFrame = 58.0f;
         break;
     case AnimationType::Run:
-        animation.setAnimation(1, 59.0f, 78.0f);
+        newAnimationIndex = 1;
+        newStartFrame = 59.0f;
+        newEndFrame = 78.0f;
         break;
-        // Add cases for other animation types
+        // Add other animation types as needed
+    default:
+        std::cerr << "Unknown animation type encountered." << std::endl;
+        return;
+    }
+
+    // Check if a valid animation index was set
+    if (newAnimationIndex != -1 && newAnimationIndex != animation.currentAnimationIndex) {
+        animation.blendFactor = 0.0f;
+        animation.currentAnimationIndex = newAnimationIndex;
+        animation.startFrame = newStartFrame;
+        animation.endFrame = newEndFrame;
+        animation.animationTime = newStartFrame; // Reset animation time to start of new animation
     }
 }
 
