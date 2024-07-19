@@ -756,6 +756,7 @@ int main() {
 
     initializeNPCs();
 
+    // Set up behavior trees for NPCs
     BT::BehaviorTreeFactory factory;
     BT::registerNodes(factory);
     npcManager.setupBehaviorTrees(factory);

@@ -48,20 +48,35 @@ namespace BT {
     }
 
     BT::NodeStatus ShouldRun::tick() {
+        auto blackboard = config().blackboard;
+        if (!blackboard) {
+            std::cerr << "Blackboard does not exist in ShouldRun::tick" << std::endl;
+            return BT::NodeStatus::FAILURE;
+        }
+
         NPC* npc = nullptr;
-        if (getInput<NPC*>("npc", npc)) {
-            if (npc != nullptr) {
-                float currentTime = static_cast<float>(glfwGetTime());
-                if (glfwGetKey(glfwGetCurrentContext(), GLFW_KEY_R) == GLFW_PRESS) {
-                    if (currentTime - lastToggleTime > toggleDelay) {
-                        npc->setRunning(!npc->isRunning());
-                        lastToggleTime = currentTime;
-                    }
-                }
-                return npc->isRunning() ? BT::NodeStatus::SUCCESS : BT::NodeStatus::FAILURE;
+        try {
+            npc = blackboard->get<NPC*>("npc");
+            if (!npc) {
+                std::cerr << "Failed to get NPC from blackboard in ShouldRun::tick" << std::endl;
+                return BT::NodeStatus::FAILURE;
             }
         }
-        return BT::NodeStatus::FAILURE;
+        catch (const std::exception& e) {
+            std::cerr << "Exception while accessing blackboard in ShouldRun::tick: " << e.what() << std::endl;
+            return BT::NodeStatus::FAILURE;
+        }
+
+        float currentTime = static_cast<float>(glfwGetTime());
+        if (glfwGetKey(glfwGetCurrentContext(), GLFW_KEY_R) == GLFW_PRESS) {
+            if (currentTime - lastToggleTime > toggleDelay) {
+                npc->setRunning(!npc->isRunning());
+                lastToggleTime = currentTime;
+            }
+        }
+
+        bool isRunning = npc->isRunning();
+        return isRunning ? BT::NodeStatus::SUCCESS : BT::NodeStatus::FAILURE;
     }
 
     void registerNodes(BT::BehaviorTreeFactory& factory) {
