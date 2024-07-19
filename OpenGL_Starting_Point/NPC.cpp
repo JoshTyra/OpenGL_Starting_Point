@@ -31,7 +31,7 @@ void NPC::update(float deltaTime) {
     }
 
     // Update blend factor
-    const float blendDuration = 0.25f;
+    const float blendDuration = 0.2f;
     if (animation.blendFactor < 1.0f) {
         animation.blendFactor = std::min(animation.blendFactor + deltaTime / blendDuration, 1.0f);
     }
@@ -92,14 +92,23 @@ void NPC::setAnimation(AnimationType type) {
         newStartFrame = 0.0f;
         newEndFrame = 58.0f;
         break;
+    case AnimationType::Walk:
     case AnimationType::Run:
         newAnimationIndex = 1;
         newStartFrame = 59.0f;
         newEndFrame = 78.0f;
         break;
-        // Add other animation types as needed
+    case AnimationType::Attack:
+        // Add appropriate values for Attack animation
+        break;
+    case AnimationType::Die:
+        // Add appropriate values for Die animation
+        break;
+    case AnimationType::Interact:
+        // Add appropriate values for Interact animation
+        break;
     default:
-        std::cerr << "Unknown animation type encountered." << std::endl;
+        std::cerr << "Unknown animation type encountered: " << static_cast<int>(type) << std::endl;
         return;
     }
 
