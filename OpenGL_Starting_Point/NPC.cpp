@@ -247,30 +247,28 @@ void NPCManager::setupBehaviorTrees(BT::BehaviorTreeFactory& factory) {
 }
 
 void NPCManager::addNPC(const glm::vec3& position, const glm::mat4& initialTransform) {
-    if (npcs.size() < maxNPCs) {
-        auto npc = std::make_unique<NPC>(npcs.size(), position, initialTransform);
-
-        // Setup the behavior tree for the NPC here
-        BT::BehaviorTreeFactory factory;
-        registerNodes(factory); // Ensure this function is correctly defined to register nodes
-
-        try {
-            auto tree = factory.createTreeFromText(BT::getMainTreeXML());
-            if (tree.rootNode()) {
-                npc->setupBehaviorTree(std::move(tree));
-            }
-            else {
-                std::cerr << "Error: Failed to create a valid behavior tree for NPC ID: " << npc->getID() << std::endl;
-            }
-        }
-        catch (const std::exception& e) {
-            std::cerr << "Exception when creating behavior tree: " << e.what() << " for NPC ID: " << npc->getID() << std::endl;
-        }
-
-        npcs.push_back(std::move(npc));
-    }
-    else {
+    if (npcs.size() >= maxNPCs) {
         std::cerr << "Warning: Maximum number of NPCs reached. Cannot add more." << std::endl;
+        return;
+    }
+
+    auto npc = std::make_unique<NPC>(npcs.size(), position, initialTransform);
+
+    BT::BehaviorTreeFactory factory;
+    registerNodes(factory);
+
+    try {
+        auto tree = factory.createTreeFromText(BT::getMainTreeXML());
+        if (tree.rootNode()) {
+            npc->setupBehaviorTree(std::move(tree));
+            npcs.push_back(std::move(npc));
+        }
+        else {
+            std::cerr << "Error: Failed to create a valid behavior tree for NPC ID: " << npc->getID() << std::endl;
+        }
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Exception when creating behavior tree: " << e.what() << " for NPC ID: " << npc->getID() << std::endl;
     }
 }
 
