@@ -129,7 +129,7 @@ public:
 #ifdef _DEBUG
         8;
 #else
-        200;
+        64;
 #endif
 
     explicit NPCManager(size_t maxNPCs = MAX_NPCS);
