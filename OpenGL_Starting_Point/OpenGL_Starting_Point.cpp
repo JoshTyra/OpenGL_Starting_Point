@@ -27,6 +27,7 @@
 #include "BehaviorTrees.h"
 #include "NPC.h"
 #include "FrameTimeTracker.h"
+#include "Skybox.h"
 
 // Constants and global variables
 const int WIDTH = 2560;
@@ -682,6 +683,23 @@ int main() {
 
     setupImGui(window);
 
+    std::vector<std::string> Skyboxfaces{
+        FileSystemUtils::getAssetFilePath("textures/cubemaps/right.tga"),
+        FileSystemUtils::getAssetFilePath("textures/cubemaps/left.tga"),
+        FileSystemUtils::getAssetFilePath("textures/cubemaps/top.tga"),
+        FileSystemUtils::getAssetFilePath("textures/cubemaps/bottom.tga"),
+        FileSystemUtils::getAssetFilePath("textures/cubemaps/front.tga"),
+        FileSystemUtils::getAssetFilePath("textures/cubemaps/back.tga")
+    };
+
+    Skybox skybox(Skyboxfaces);
+
+    if (!skybox.isValid()) {
+        std::cerr << "Skybox initialization failed!" << std::endl;
+    }
+
+    skybox.printDebugInfo();
+
     // Initialize TBO
     initTBO();
 
@@ -875,6 +893,9 @@ int main() {
 
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        // Draw skybox here
+        skybox.draw(camera.getViewMatrix(), camera.getProjectionMatrix(static_cast<float>(WIDTH) / static_cast<float>(HEIGHT)));
 
         // Start the ImGui frame
         ImGui_ImplOpenGL3_NewFrame();
