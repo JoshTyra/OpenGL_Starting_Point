@@ -4,10 +4,11 @@
 #include <glm/gtc/random.hpp>
 #include "BehaviorTrees.h"
 
-NPC::NPC(int id, const glm::vec3& startPosition, const glm::mat4& initialTransform)
+NPC::NPC(int id, const glm::vec3& startPosition, const glm::mat4& initialTransform, PhysicsWorld& physicsWorld)
     : instanceID(id),
     initialTransform(initialTransform),
-    color(getRandomColor()) {
+    color(getRandomColor()),
+    physicsWorld(physicsWorld) {
     movement.position = startPosition;
     updateModelMatrix();
 
@@ -38,6 +39,10 @@ void NPC::update(float deltaTime) {
 
     updatePathFinding(deltaTime);
     updateModelMatrix();
+
+    // Update position based on physics
+    glm::mat4 physicsTransform = physicsWorld.getTransform(physicsBodyIndex);
+    setPosition(glm::vec3(physicsTransform[3]));
 }
 
 void NPC::setState(NPCState newState) {
@@ -203,6 +208,27 @@ glm::vec3 NPC::getRandomColor() {
     return glm::vec3(r / 255.0f, g / 255.0f, b / 255.0f);
 }
 
+void NPC::applyForce(const glm::vec3& force) {
+    physicsWorld.applyForce(physicsBodyIndex, force);
+}
+
+void NPC::applyImpulse(const glm::vec3& impulse) {
+    physicsWorld.applyImpulse(physicsBodyIndex, impulse);
+}
+
+void NPC::setPhysicsBodyIndex(int index) {
+    if (index >= 0) {
+        physicsBodyIndex = index;
+    }
+    else {
+        std::cerr << "Invalid physics body index: " << index << std::endl;
+    }
+}
+
+int NPC::getPhysicsBodyIndex() const {
+    return physicsBodyIndex;
+}
+
 // Implement NPCAnimation methods
 void NPCAnimation::update(float deltaTime) {
     animationTime += deltaTime;
@@ -247,7 +273,8 @@ void NPCMovement::updateRotation(float deltaTime, float rotationSpeed) {
 }
 
 // NPCManager implementation
-NPCManager::NPCManager(size_t maxNPCs) : maxNPCs(std::min(maxNPCs, MAX_NPCS)) {}
+NPCManager::NPCManager(size_t maxNPCs, PhysicsWorld& physicsWorld)
+    : maxNPCs(std::min(maxNPCs, MAX_NPCS)), physicsWorld(physicsWorld) {}
 
 void NPCManager::initializeNPCs(float worldSize, const glm::mat4& originalModelMatrix) {
     this->worldSize = worldSize;
@@ -286,12 +313,16 @@ void NPCManager::addNPC(const glm::vec3& position, const glm::mat4& initialTrans
         return;
     }
 
-    auto npc = std::make_unique<NPC>(npcs.size(), position, initialTransform);
-
-    BT::BehaviorTreeFactory factory;
-    registerNodes(factory);
+    // Add a physics body for this NPC first
+    int physicsBodyIndex = physicsWorld.addRigidBody(position, glm::vec3(1, 2, 1), 75.0f); // Adjust size and mass as needed
 
     try {
+        auto npc = std::make_unique<NPC>(npcs.size(), position, initialTransform, physicsWorld);
+        npc->setPhysicsBodyIndex(physicsBodyIndex);
+
+        BT::BehaviorTreeFactory factory;
+        registerNodes(factory);
+
         auto tree = factory.createTreeFromText(BT::getMainTreeXML());
         if (tree.rootNode()) {
             npc->setupBehaviorTree(std::move(tree));
@@ -299,17 +330,24 @@ void NPCManager::addNPC(const glm::vec3& position, const glm::mat4& initialTrans
         }
         else {
             std::cerr << "Error: Failed to create a valid behavior tree for NPC ID: " << npc->getID() << std::endl;
+            physicsWorld.removeRigidBody(physicsBodyIndex);
+            return;
         }
     }
     catch (const std::exception& e) {
-        std::cerr << "Exception when creating behavior tree: " << e.what() << " for NPC ID: " << npc->getID() << std::endl;
+        std::cerr << "Exception when creating NPC or behavior tree: " << e.what() << std::endl;
+        physicsWorld.removeRigidBody(physicsBodyIndex);
+        return;
     }
 }
 
 void NPCManager::removeNPC(int id) {
-    npcs.erase(std::remove_if(npcs.begin(), npcs.end(),
-        [id](const auto& npc) { return npc->getID() == id; }),
-        npcs.end());
+    auto it = std::find_if(npcs.begin(), npcs.end(),
+        [id](const auto& npc) { return npc->getID() == id; });
+    if (it != npcs.end()) {
+        physicsWorld.removeRigidBody((*it)->getPhysicsBodyIndex());
+        npcs.erase(it);
+    }
 }
 
 NPC* NPCManager::getNPC(int id) {
@@ -328,6 +366,12 @@ void NPCManager::updatePathfinding() {
 
 void NPCManager::cleanupDeadNPCs() {
     npcs.erase(std::remove_if(npcs.begin(), npcs.end(),
-        [](const auto& npc) { return !npc->isAlive(); }),
+        [this](const auto& npc) {
+            if (!npc->isAlive()) {
+                physicsWorld.removeRigidBody(npc->getPhysicsBodyIndex());
+                return true;
+            }
+            return false;
+        }),
         npcs.end());
 }

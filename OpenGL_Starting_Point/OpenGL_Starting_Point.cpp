@@ -28,6 +28,7 @@
 #include "NPC.h"
 #include "FrameTimeTracker.h"
 #include "Skybox.h"
+#include "PhysicsWorld.h"
 
 // Constants and global variables
 const int WIDTH = 2560;
@@ -101,7 +102,8 @@ float idleAnimationChangeTimer = 0.0f;
 const float idleAnimationChangeInterval = 2.0f; // Minimum interval between idle animation changes in seconds
 bool idleAnimationSelected = false; // Add this flag at the top of your file
 
-NPCManager npcManager(NPCManager::MAX_NPCS);
+PhysicsWorld physicsWorld;
+NPCManager npcManager(NPCManager::MAX_NPCS, physicsWorld);
 
 // Plane geometry shit
 unsigned int planeVAO, planeVBO;
@@ -681,6 +683,10 @@ int main() {
     // Define the viewport dimensions
     glViewport(0, 0, WIDTH, HEIGHT);
 
+    physicsWorld.initialize();
+
+    physicsWorld.addGroundPlane();
+
     setupImGui(window);
 
     std::vector<std::string> Skyboxfaces{
@@ -860,6 +866,8 @@ int main() {
 
     FrameTimeTracker frameTracker;
 
+    physicsWorld.addRigidBody(glm::vec3(0, 5, 0), glm::vec3(1, 1, 1), 1.0f); // A 1x1x1 cube at (0,5,0) with mass 1
+
     // Main render loop
     while (!glfwWindowShouldClose(window)) {
         frameTracker.update();
@@ -893,6 +901,8 @@ int main() {
 
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        physicsWorld.update(deltaTime);
 
         // Draw skybox here
         skybox.draw(camera.getViewMatrix(), camera.getProjectionMatrix(static_cast<float>(WIDTH) / static_cast<float>(HEIGHT)));
@@ -1014,6 +1024,8 @@ int main() {
         // Render ImGui
         ImGui::Render();
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+        glm::mat4 objectTransform = physicsWorld.getTransform(0);
 
         glfwSwapBuffers(window);
         glfwPollEvents();

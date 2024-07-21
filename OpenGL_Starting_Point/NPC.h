@@ -8,6 +8,7 @@
 #include <optional>
 #include <span>
 #include <behaviortree_cpp/bt_factory.h>
+#include "PhysicsWorld.h"
 
 enum class NPCState {
     Idle,
@@ -57,7 +58,7 @@ struct NPCMovement {
 
 class NPC {
 public:
-    NPC(int id, const glm::vec3& startPosition, const glm::mat4& initialTransform);
+    NPC(int id, const glm::vec3& startPosition, const glm::mat4& initialTransform, PhysicsWorld& physicsWorld);
     ~NPC() = default;
 
     NPC(const NPC&) = delete;
@@ -101,6 +102,10 @@ public:
     void setStats(const NPCStats& newStats) noexcept { stats = newStats; }
 
     [[nodiscard]] BT::Blackboard::Ptr getBlackboard() const noexcept { return blackboard; }
+    void setPhysicsBodyIndex(int index);
+    int getPhysicsBodyIndex() const;
+    void applyForce(const glm::vec3& force);
+    void applyImpulse(const glm::vec3& impulse);
 
 private:
     const int instanceID;
@@ -118,6 +123,9 @@ private:
     std::vector<glm::vec3> currentPath;
     size_t currentPathIndex{ 0 };
 
+    int physicsBodyIndex = -1;
+    PhysicsWorld& physicsWorld;
+
     void updateModelMatrix() noexcept;
     void updatePathFinding(float deltaTime);
     static glm::vec3 getRandomColor();
@@ -132,7 +140,7 @@ public:
         64;
 #endif
 
-    explicit NPCManager(size_t maxNPCs = MAX_NPCS);
+    explicit NPCManager(size_t maxNPCs, PhysicsWorld& physicsWorld);
     ~NPCManager() = default;
 
     NPCManager(const NPCManager&) = delete;
@@ -156,6 +164,7 @@ private:
     std::vector<std::unique_ptr<NPC>> npcs;
     const size_t maxNPCs;
     float worldSize{ 0.0f };
+    PhysicsWorld& physicsWorld;
 
     void cleanupDeadNPCs();
 };
