@@ -50,6 +50,35 @@ int PhysicsWorld::addRigidBody(const glm::vec3& position, const glm::vec3& size,
     return rigidBodies.size() - 1;  // Return the index of the new body
 }
 
+int PhysicsWorld::addCapsuleRigidBody(const glm::vec3& position, float radius, float height, float mass, float yOffset) {
+    btCollisionShape* capsuleShape = new btCapsuleShape(radius, height);
+
+    btTransform transform;
+    transform.setIdentity();
+    transform.setOrigin(btVector3(position.x, position.y, position.z));
+
+    // Create a child transform for the capsule shape
+    btTransform localTransform;
+    localTransform.setIdentity();
+    // Move the capsule up by yOffset
+    localTransform.setOrigin(btVector3(0, yOffset, 0));
+
+    // Create a compound shape
+    btCompoundShape* compoundShape = new btCompoundShape();
+    compoundShape->addChildShape(localTransform, capsuleShape);
+
+    btVector3 localInertia(0, 0, 0);
+    if (mass != 0.0f) compoundShape->calculateLocalInertia(mass, localInertia);
+
+    btDefaultMotionState* motionState = new btDefaultMotionState(transform);
+    btRigidBody::btRigidBodyConstructionInfo rbInfo(mass, motionState, compoundShape, localInertia);
+    btRigidBody* body = new btRigidBody(rbInfo);
+
+    dynamicsWorld->addRigidBody(body);
+    rigidBodies.push_back(body);
+    return rigidBodies.size() - 1;
+}
+
 glm::mat4 PhysicsWorld::getTransform(int index) const {
     if (index < 0 || index >= rigidBodies.size()) return glm::mat4(1.0f);
 
@@ -100,5 +129,17 @@ void PhysicsWorld::applyForce(int bodyIndex, const glm::vec3& force) {
 void PhysicsWorld::applyImpulse(int bodyIndex, const glm::vec3& impulse) {
     if (bodyIndex >= 0 && bodyIndex < rigidBodies.size()) {
         rigidBodies[bodyIndex]->applyCentralImpulse(btVector3(impulse.x, impulse.y, impulse.z));
+    }
+}
+
+void PhysicsWorld::setDebugDrawer(PhysicsDebugDrawer* debugDrawer) {
+    m_debugDrawer = debugDrawer;
+    dynamicsWorld->setDebugDrawer(m_debugDrawer);
+}
+
+void PhysicsWorld::debugDraw(const glm::mat4& viewProjection) {
+    if (m_debugDrawer) {
+        dynamicsWorld->debugDrawWorld();
+        m_debugDrawer->render(viewProjection);
     }
 }

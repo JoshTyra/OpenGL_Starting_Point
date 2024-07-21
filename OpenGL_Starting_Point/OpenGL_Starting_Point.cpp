@@ -29,6 +29,7 @@
 #include "FrameTimeTracker.h"
 #include "Skybox.h"
 #include "PhysicsWorld.h"
+#include "PhysicsDebugDrawer.h"
 
 // Constants and global variables
 const int WIDTH = 2560;
@@ -103,6 +104,7 @@ const float idleAnimationChangeInterval = 2.0f; // Minimum interval between idle
 bool idleAnimationSelected = false; // Add this flag at the top of your file
 
 PhysicsWorld physicsWorld;
+PhysicsDebugDrawer physicsDebugDrawer;
 NPCManager npcManager(NPCManager::MAX_NPCS, physicsWorld);
 
 // Plane geometry shit
@@ -866,7 +868,9 @@ int main() {
 
     FrameTimeTracker frameTracker;
 
-    physicsWorld.addRigidBody(glm::vec3(0, 5, 0), glm::vec3(1, 1, 1), 1.0f); // A 1x1x1 cube at (0,5,0) with mass 1
+    physicsDebugDrawer.init();
+    physicsWorld.setDebugDrawer(&physicsDebugDrawer);
+    physicsDebugDrawer.setDebugMode(btIDebugDraw::DBG_DrawWireframe | btIDebugDraw::DBG_DrawContactPoints);
 
     // Main render loop
     while (!glfwWindowShouldClose(window)) {
@@ -1020,6 +1024,10 @@ int main() {
         glBindVertexArray(planeVAO);
         glDrawArrays(GL_TRIANGLES, 0, 6);
         glBindVertexArray(0);
+
+        // Call physics debugger after rendering everything in the scene, but before render ImGUI elements
+        glm::mat4 viewProjection = camera.getProjectionMatrix(static_cast<float>(WIDTH) / static_cast<float>(HEIGHT)) * camera.getViewMatrix();
+        physicsWorld.debugDraw(viewProjection);
 
         // Render ImGui
         ImGui::Render();

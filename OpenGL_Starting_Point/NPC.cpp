@@ -313,8 +313,14 @@ void NPCManager::addNPC(const glm::vec3& position, const glm::mat4& initialTrans
         return;
     }
 
-    // Add a physics body for this NPC first
-    int physicsBodyIndex = physicsWorld.addRigidBody(position, glm::vec3(1, 2, 1), 75.0f); // Adjust size and mass as needed
+    // Capsule parameters
+    float radius = 0.45f;  // Adjust based on your NPC's width
+    float height = 0.75f;  // Adjust based on your NPC's height
+    float mass = 75.0f;   // Keep the same mass or adjust as needed
+    float yOffset = 0.85f; // Adjust this value to move the capsule up or down
+
+    // Add a capsule physics body for this NPC
+    int physicsBodyIndex = physicsWorld.addCapsuleRigidBody(position, radius, height, mass, yOffset);
 
     try {
         auto npc = std::make_unique<NPC>(npcs.size(), position, initialTransform, physicsWorld);
