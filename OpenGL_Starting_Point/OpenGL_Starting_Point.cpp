@@ -886,11 +886,7 @@ int main() {
         // Update FPS every second
         if (elapsedTime >= 1.0) {
             double avgFPS = 1000.0 / frameTracker.getAverageFrameTime();
-            double minFPS = 1000.0 / frameTracker.getMaxFrameTime();
-            double maxFPS = 1000.0 / frameTracker.getMinFrameTime();
-            std::string title = "OpenGL Basic Application - Avg FPS: " + std::to_string(avgFPS) +
-                " Min: " + std::to_string(minFPS) +
-                " Max: " + std::to_string(maxFPS);
+            std::string title = "OpenGL Basic Application - Avg FPS: " + std::to_string(avgFPS);
             glfwSetWindowTitle(window, title.c_str());
 
             // Reset for the next second
