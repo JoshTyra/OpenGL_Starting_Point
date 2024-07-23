@@ -27,15 +27,16 @@ void PhysicsWorld::initialize() {
     solver = new btSequentialImpulseConstraintSolver;
     dynamicsWorld = new btDiscreteDynamicsWorld(dispatcher, overlappingPairCache, solver, collisionConfiguration);
 
-    dynamicsWorld->setGravity(btVector3(0, -9.81f, 0));
+    dynamicsWorld->setGravity(btVector3(0, -10.0f, 0));
 }
 
 void PhysicsWorld::update(float deltaTime) {
-    dynamicsWorld->stepSimulation(deltaTime, 10);
+    dynamicsWorld->stepSimulation(deltaTime, 10, 1.0f / 240.0f);
 }
 
-void PhysicsWorld::addGroundPlane(float y) {
-    btCollisionShape* groundShape = new btStaticPlaneShape(btVector3(0, 1, 0), y);
+void PhysicsWorld::addGroundPlane(float y, float width, float depth) {
+    // Use half-extents for btBoxShape
+    btCollisionShape* groundShape = new btBoxShape(btVector3(width / 2, 0.1f, depth / 2));
     btDefaultMotionState* groundMotionState = new btDefaultMotionState(btTransform(btQuaternion(0, 0, 0, 1), btVector3(0, y, 0)));
     btRigidBody::btRigidBodyConstructionInfo groundRigidBodyCI(0, groundMotionState, groundShape, btVector3(0, 0, 0));
     btRigidBody* groundRigidBody = new btRigidBody(groundRigidBodyCI);
@@ -73,6 +74,10 @@ int PhysicsWorld::addCapsuleRigidBody(const glm::vec3& position, float radius, f
     btDefaultMotionState* motionState = new btDefaultMotionState(transform);
     btRigidBody::btRigidBodyConstructionInfo rbInfo(mass, motionState, compoundShape, localInertia);
     btRigidBody* body = new btRigidBody(rbInfo);
+    body->setDamping(0.1f, 0.9f);  // Linear damping, Angular damping
+    // Limit angular velocity to prevent rapid spinning
+    body->setAngularFactor(btVector3(0.2f, 1.0f, 0.2f));
+    body->setFriction(0.8f);
 
     dynamicsWorld->addRigidBody(body);
     rigidBodies.push_back(body);
@@ -138,8 +143,27 @@ void PhysicsWorld::setDebugDrawer(PhysicsDebugDrawer* debugDrawer) {
 }
 
 void PhysicsWorld::debugDraw(const glm::mat4& viewProjection) {
-    if (m_debugDrawer) {
+    if (m_debugDrawer && m_debugDrawer->getDebugMode() != 0) {
         dynamicsWorld->debugDrawWorld();
         m_debugDrawer->render(viewProjection);
     }
+}
+
+void PhysicsWorld::toggleDebugMode(int debugMode) {
+    if (m_debugDrawer) {
+        int currentMode = m_debugDrawer->getDebugMode();
+        if (currentMode & debugMode) {
+            m_debugDrawer->setDebugMode(currentMode & ~debugMode);
+        }
+        else {
+            m_debugDrawer->setDebugMode(currentMode | debugMode);
+        }
+    }
+}
+
+btRigidBody* PhysicsWorld::getRigidBody(int index) const {
+    if (index >= 0 && index < rigidBodies.size()) {
+        return rigidBodies[index];
+    }
+    return nullptr;
 }

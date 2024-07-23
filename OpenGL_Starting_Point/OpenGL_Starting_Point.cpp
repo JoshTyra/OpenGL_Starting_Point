@@ -47,6 +47,8 @@ glm::vec3 lightDir = glm::normalize(glm::vec3(0.716f, 0.325f, 0.618f));
 glm::vec3 originalLightDir = glm::vec3(0.3f, 1.0f, 0.5f);
 
 // Add a flag to keep track of mouse control state
+double currentMouseX = 0.0;
+double currentMouseY = 0.0;
 bool mouseControlEnabled = true;
 
 // UBO structures
@@ -103,8 +105,18 @@ float idleAnimationChangeTimer = 0.0f;
 const float idleAnimationChangeInterval = 2.0f; // Minimum interval between idle animation changes in seconds
 bool idleAnimationSelected = false; // Add this flag at the top of your file
 
+// Bullet physics shit
+bool debugRenderingEnabled = false;
 PhysicsWorld physicsWorld;
 PhysicsDebugDrawer physicsDebugDrawer;
+GLuint rayVAO, rayVBO;
+glm::vec3 debugRayStart;
+glm::vec3 debugRayEnd;
+bool debugRayActive = false;
+const float debugRayDuration = 2.0f;  // Show the ray for 2 seconds
+static float debugRayTimer = 0.0f;
+
+const float NPC_REMOVAL_THRESHOLD = -10.0f; // How far a npc falls in the scene, before being removed.
 NPCManager npcManager(NPCManager::MAX_NPCS, physicsWorld);
 
 // Plane geometry shit
@@ -141,6 +153,11 @@ unsigned int loadTexture(const char* path);
 void initShaders();
 void processInput(GLFWwindow* window);
 void mouseCallback(GLFWwindow* window, double xpos, double ypos);
+void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods);
+void handleNPCClick(double mouseX, double mouseY);
+void calculateMouseRay(double mouseX, double mouseY, glm::vec3& rayStart, glm::vec3& rayEnd);
+void initDebugRay();
+void renderDebugRay();
 void framebufferSizeCallback(GLFWwindow* window, int width, int height);
 void windowIconifyCallback(GLFWwindow* window, int iconified);
 void createPlane(float width, float height, float textureTiling);
@@ -152,6 +169,7 @@ void initUBOs();
 void updateUBOs(const glm::vec3& lightDir);
 void setupImGui(GLFWwindow* window);
 void initializeNPCs();
+void checkGLError(const char* operation);
 
 unsigned int loadCubemap(std::vector<std::string> faces) {
     unsigned int textureID;
@@ -528,28 +546,22 @@ const char* planeFragmentShaderSource = R"(
 const char* debugVertexShaderSource = R"(
     #version 430 core
     layout (location = 0) in vec3 aPos;
-    layout (location = 1) in vec3 aColor;
-
-    out vec3 Color;
-
-    uniform mat4 view;
-    uniform mat4 projection;
-
+    
+    uniform mat4 viewProjection;
+    
     void main()
     {
-        gl_Position = projection * view * vec4(aPos, 1.0);
-        Color = aColor;
+        gl_Position = viewProjection * vec4(aPos, 1.0);
     }
 )";
 
 const char* debugFragmentShaderSource = R"(
     #version 430 core
-    in vec3 Color;
     out vec4 FragColor;
-
+    
     void main()
     {
-        FragColor = vec4(Color, 1.0);
+        FragColor = vec4(1.0, 1.0, 0.0, 1.0); // Bright yellow color
     }
 )";
 
@@ -623,12 +635,36 @@ void processInput(GLFWwindow* window) {
     if (glfwGetKey(window, GLFW_KEY_M) == GLFW_RELEASE) {
         mKeyPressed = false;
     }
+
+    static bool TKeyPressed = false;
+    if (glfwGetKey(window, GLFW_KEY_T) == GLFW_PRESS && !TKeyPressed) {
+        TKeyPressed = true;
+        debugRenderingEnabled = !debugRenderingEnabled;
+        if (debugRenderingEnabled) {
+            physicsWorld.toggleDebugMode(btIDebugDraw::DBG_DrawWireframe | btIDebugDraw::DBG_DrawContactPoints);
+        }
+        else {
+            physicsWorld.toggleDebugMode(0);
+        }
+        std::cout << "Debug rendering " << (debugRenderingEnabled ? "enabled" : "disabled") << std::endl;
+    }
+    if (glfwGetKey(window, GLFW_KEY_T) == GLFW_RELEASE) {
+        TKeyPressed = false;
+    }
+}
+
+void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
+    if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS) {
+        handleNPCClick(currentMouseX, currentMouseY);
+        debugRayActive = true;
+        debugRayTimer = 0.0f;
+    }
 }
 
 void mouseCallback(GLFWwindow* window, double xpos, double ypos) {
-    if (!mouseControlEnabled) {
-        return; // Do not process mouse movement if mouse control is disabled
-    }
+    static bool firstMouse = true;
+    static float lastX = WIDTH / 2.0f;
+    static float lastY = HEIGHT / 2.0f;
 
     if (firstMouse) {
         lastX = xpos;
@@ -641,7 +677,13 @@ void mouseCallback(GLFWwindow* window, double xpos, double ypos) {
     lastX = xpos;
     lastY = ypos;
 
-    camera.processMouseMovement(xoffset, yoffset);
+    if (mouseControlEnabled) {
+        camera.processMouseMovement(xoffset, yoffset);
+    }
+
+    // Store the current mouse position for use in click handling
+    currentMouseX = xpos;
+    currentMouseY = ypos;
 }
 
 float lerpAngle(float start, float end, float t) {
@@ -670,6 +712,7 @@ int main() {
     glfwSwapInterval(1); // Enable VSync to cap frame rate to monitor's refresh rate
     glfwSetCursorPosCallback(window, mouseCallback);
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+    glfwSetMouseButtonCallback(window, mouseButtonCallback);
 
     // Set the window size and iconify callbacks
     glfwSetFramebufferSizeCallback(window, framebufferSizeCallback);
@@ -686,8 +729,6 @@ int main() {
     glViewport(0, 0, WIDTH, HEIGHT);
 
     physicsWorld.initialize();
-
-    physicsWorld.addGroundPlane();
 
     setupImGui(window);
 
@@ -727,6 +768,7 @@ int main() {
     float planeHeight = WORLD_SIZE / 2;
     float textureTiling = WORLD_SIZE / 2; // Example value for tiling
     createPlane(planeWidth, planeHeight, textureTiling);
+    physicsWorld.addGroundPlane(0.0f, WORLD_SIZE, WORLD_SIZE);
 
     // Load the plane texture
     loadPlaneTexture();
@@ -871,6 +913,7 @@ int main() {
     physicsDebugDrawer.init();
     physicsWorld.setDebugDrawer(&physicsDebugDrawer);
     physicsDebugDrawer.setDebugMode(btIDebugDraw::DBG_DrawWireframe | btIDebugDraw::DBG_DrawContactPoints);
+    initDebugRay();
 
     // Main render loop
     while (!glfwWindowShouldClose(window)) {
@@ -904,8 +947,12 @@ int main() {
 
         physicsWorld.update(deltaTime);
 
+        // Check if an NPC is falling, for removal
+        npcManager.checkAndRemoveFallenNPCs(NPC_REMOVAL_THRESHOLD);
+
         // Draw skybox here
         skybox.draw(camera.getViewMatrix(), camera.getProjectionMatrix(static_cast<float>(WIDTH) / static_cast<float>(HEIGHT)));
+        checkGLError("Skybox Draw");
 
         // Start the ImGui frame
         ImGui_ImplOpenGL3_NewFrame();
@@ -937,6 +984,7 @@ int main() {
 
         // Update UBOs
         updateUBOs(lightDir);
+        checkGLError("Updating UBOs");
 
         // Update NPCs
         npcManager.updateNPCs(deltaTime);
@@ -1008,6 +1056,8 @@ int main() {
             glDrawElementsInstanced(GL_TRIANGLES, mesh.indices.size(), GL_UNSIGNED_INT, 0, npcManager.getNPCs().size());
         }
 
+        checkGLError("NPC Rendering");
+
         // Render the plane
         glUseProgram(planeShaderProgram);
         glm::mat4 planeModel = glm::mat4(1.0f);
@@ -1021,9 +1071,24 @@ int main() {
         glDrawArrays(GL_TRIANGLES, 0, 6);
         glBindVertexArray(0);
 
-        // Call physics debugger after rendering everything in the scene, but before render ImGUI elements
-        glm::mat4 viewProjection = camera.getProjectionMatrix(static_cast<float>(WIDTH) / static_cast<float>(HEIGHT)) * camera.getViewMatrix();
-        physicsWorld.debugDraw(viewProjection);
+        checkGLError("Plane Rendering");
+
+        // In your main loop
+        if (debugRayActive) {
+            debugRayTimer += deltaTime;
+            if (debugRayTimer > debugRayDuration) {
+                debugRayActive = false;
+                debugRayTimer = 0.0f;
+            }
+        }
+
+        if (debugRenderingEnabled) {
+            glm::mat4 viewProjection = camera.getProjectionMatrix(static_cast<float>(WIDTH) / static_cast<float>(HEIGHT)) * camera.getViewMatrix();
+            physicsWorld.debugDraw(viewProjection);
+            renderDebugRay();
+        }
+
+        checkGLError("Debug Ray Rendering");
 
         // Render ImGui
         ImGui::Render();
@@ -1053,6 +1118,7 @@ int main() {
     glDeleteProgram(debugShaderProgram);
     glDeleteBuffers(1, &cameraUBO);
     glDeleteBuffers(1, &lightUBO);
+    glDeleteProgram(debugShaderProgram);
 
     glfwTerminate();
     return 0;
@@ -1208,6 +1274,143 @@ void initializeNPCs() {
     originalModelMatrix = glm::scale(originalModelMatrix, glm::vec3(0.025f));
 
     npcManager.initializeNPCs(WORLD_SIZE, originalModelMatrix);
+}
+
+void handleNPCClick(double mouseX, double mouseY) {
+    glm::vec3 rayStart, rayEnd;
+    calculateMouseRay(mouseX, mouseY, rayStart, rayEnd);
+
+    debugRayStart = rayStart;
+    debugRayEnd = rayEnd;
+    debugRayActive = true;
+
+    std::cout << "Ray Start: " << glm::to_string(rayStart) << std::endl;
+    std::cout << "Ray End: " << glm::to_string(rayEnd) << std::endl;
+
+    btCollisionWorld::ClosestRayResultCallback rayCallback(
+        btVector3(rayStart.x, rayStart.y, rayStart.z),
+        btVector3(rayEnd.x, rayEnd.y, rayEnd.z)
+    );
+
+    physicsWorld.getDynamicsWorld()->rayTest(
+        btVector3(rayStart.x, rayStart.y, rayStart.z),
+        btVector3(rayEnd.x, rayEnd.y, rayEnd.z),
+        rayCallback
+    );
+
+    if (rayCallback.hasHit()) {
+        std::cout << "Ray hit something!" << std::endl;
+        std::cout << "Ray hit at point: "
+            << rayCallback.m_hitPointWorld.x() << ", "
+            << rayCallback.m_hitPointWorld.y() << ", "
+            << rayCallback.m_hitPointWorld.z() << std::endl;
+
+        const btRigidBody* body = btRigidBody::upcast(rayCallback.m_collisionObject);
+        if (body) {
+            std::cout << "Hit a rigid body!" << std::endl;
+
+            btVector3 position = body->getWorldTransform().getOrigin();
+            btVector3 velocity = body->getLinearVelocity();
+            float mass = 1.0f / body->getInvMass();
+
+            std::cout << "Body position: " << position.x() << ", " << position.y() << ", " << position.z() << std::endl;
+            std::cout << "Body velocity: " << velocity.x() << ", " << velocity.y() << ", " << velocity.z() << std::endl;
+            std::cout << "Body mass: " << mass << std::endl;
+
+            // Apply an impulse to push the NPC
+            glm::vec3 impulseDir = glm::normalize(camera.getFront());
+            float impulseMagnitude = 35.0f; // Adjust this value to control the push strength
+            glm::vec3 impulse = impulseDir * impulseMagnitude;
+
+            // We need to remove the const-ness to apply the impulse
+            btRigidBody* nonConstBody = const_cast<btRigidBody*>(body);
+            nonConstBody->activate(true); // Wake up the body
+            nonConstBody->applyCentralImpulse(btVector3(impulse.x, impulse.y, impulse.z));
+
+            std::cout << "Applied impulse: " << glm::to_string(impulse) << std::endl;
+
+            // Print updated velocity after applying impulse
+            velocity = nonConstBody->getLinearVelocity();
+            std::cout << "Updated body velocity: " << velocity.x() << ", " << velocity.y() << ", " << velocity.z() << std::endl;
+        }
+    }
+    else {
+        std::cout << "Ray did not hit anything." << std::endl;
+    }
+}
+
+void calculateMouseRay(double mouseX, double mouseY, glm::vec3& rayStart, glm::vec3& rayEnd) {
+    float x = (2.0f * mouseX) / WIDTH - 1.0f;
+    float y = 1.0f - (2.0f * mouseY) / HEIGHT;
+    float z = 1.0f;
+    glm::vec3 ray_nds = glm::vec3(x, y, z);
+    glm::vec4 ray_clip = glm::vec4(ray_nds.x, ray_nds.y, -1.0, 1.0);
+    glm::vec4 ray_eye = glm::inverse(camera.getProjectionMatrix(static_cast<float>(WIDTH) / static_cast<float>(HEIGHT))) * ray_clip;
+    ray_eye = glm::vec4(ray_eye.x, ray_eye.y, -1.0, 0.0);
+    glm::vec3 ray_wor = glm::vec3(glm::inverse(camera.getViewMatrix()) * ray_eye);
+    ray_wor = glm::normalize(ray_wor);
+
+    rayStart = camera.getPosition();
+    rayEnd = rayStart + ray_wor * 1000.0f; // Adjust the ray length as needed
+}
+
+void initDebugRay() {
+    // Compile shaders
+    GLuint vertexShader = compileShader(GL_VERTEX_SHADER, debugVertexShaderSource);
+    GLuint fragmentShader = compileShader(GL_FRAGMENT_SHADER, debugFragmentShaderSource);
+
+    // Create shader program
+    debugShaderProgram = createShaderProgram(vertexShader, fragmentShader);
+
+    glDeleteShader(vertexShader);
+    glDeleteShader(fragmentShader);
+
+    glGenVertexArrays(1, &rayVAO);
+    glGenBuffers(1, &rayVBO);
+
+    glBindVertexArray(rayVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, rayVBO);
+    glBufferData(GL_ARRAY_BUFFER, 6 * sizeof(float), nullptr, GL_DYNAMIC_DRAW);
+
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+
+    glBindVertexArray(0);
+}
+
+void renderDebugRay() {
+    if (!debugRayActive) return;
+
+    glDisable(GL_DEPTH_TEST);
+
+    glUseProgram(debugShaderProgram);
+
+    glm::mat4 viewProjection = camera.getProjectionMatrix(static_cast<float>(WIDTH) / static_cast<float>(HEIGHT)) * camera.getViewMatrix();
+    GLint viewProjectionLoc = glGetUniformLocation(debugShaderProgram, "viewProjection");
+    glUniformMatrix4fv(viewProjectionLoc, 1, GL_FALSE, glm::value_ptr(viewProjection));
+
+    float rayVertices[] = {
+        debugRayStart.x, debugRayStart.y, debugRayStart.z,
+        debugRayEnd.x, debugRayEnd.y, debugRayEnd.z
+    };
+
+    glBindVertexArray(rayVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, rayVBO);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(rayVertices), rayVertices);
+
+    glDrawArrays(GL_LINES, 0, 2);
+
+    glBindVertexArray(0);
+    glUseProgram(0);
+
+    glEnable(GL_DEPTH_TEST);
+}
+
+void checkGLError(const char* operation) {
+    GLenum error;
+    while ((error = glGetError()) != GL_NO_ERROR) {
+        std::cerr << "OpenGL error after " << operation << ": " << error << std::endl;
+    }
 }
 
 

@@ -8,7 +8,12 @@ NPC::NPC(int id, const glm::vec3& startPosition, const glm::mat4& initialTransfo
     : instanceID(id),
     initialTransform(initialTransform),
     color(getRandomColor()),
-    physicsWorld(physicsWorld) {
+    physicsWorld(physicsWorld),
+    rotationAngle(0.0f),
+    currentState(NPCState::Idle),
+    modelMatrix(1.0f),
+    physicsBodyIndex(-1)
+{
     movement.position = startPosition;
     updateModelMatrix();
 
@@ -16,14 +21,37 @@ NPC::NPC(int id, const glm::vec3& startPosition, const glm::mat4& initialTransfo
     animation.animationTime = 0.0f;
     animation.currentAnimationIndex = 0;
     animation.startFrame = 0.0f;
-    animation.endFrame = 58.0f;  // Set this to a valid value based on your animation
+    animation.endFrame = 58.0f;
     animation.blendFactor = 0.0f;
+
+    // Initialize stats with default values
+    stats = NPCStats{};
 }
 
 void NPC::update(float deltaTime) {
+    // Update behavior tree
     updateBehavior(deltaTime);
-    movement.updatePosition(deltaTime, stats.speed);
-    movement.updateRotation(deltaTime, 2.0f);
+
+    // Get the physics transform
+    glm::mat4 physicsTransform = physicsWorld.getTransform(physicsBodyIndex);
+
+    // Update position and rotation based on physics
+    btRigidBody* body = physicsWorld.getRigidBody(physicsBodyIndex);
+    if (body) {
+        btTransform transform = body->getWorldTransform();
+        btVector3 up = transform.getBasis() * btVector3(0, 1, 0);
+
+        // If the character is too tilted, apply a torque to bring it upright
+        if (up.dot(btVector3(0, 1, 0)) < 0.8f) {
+            btVector3 uprightTorque = up.cross(btVector3(0, 1, 0)) * 10.0f;
+            body->applyTorque(uprightTorque);
+        }
+
+        // Update rotation angle based on physics body's rotation around Y-axis
+        btScalar yaw, pitch, roll;
+        transform.getRotation().getEulerZYX(yaw, pitch, roll);
+        rotationAngle = yaw;
+    }
 
     // Update animation time
     animation.animationTime += deltaTime;
@@ -37,12 +65,11 @@ void NPC::update(float deltaTime) {
         animation.blendFactor = std::min(animation.blendFactor + deltaTime / blendDuration, 1.0f);
     }
 
+    // Update pathfinding
     updatePathFinding(deltaTime);
-    updateModelMatrix();
 
-    // Update position based on physics
-    glm::mat4 physicsTransform = physicsWorld.getTransform(physicsBodyIndex);
-    setPosition(glm::vec3(physicsTransform[3]));
+    // Update visual representation based on physics
+    updateFromPhysics(physicsTransform);
 }
 
 void NPC::setState(NPCState newState) {
@@ -229,6 +256,21 @@ int NPC::getPhysicsBodyIndex() const {
     return physicsBodyIndex;
 }
 
+void NPC::updateFromPhysics(const glm::mat4& physicsTransform) {
+    const float interpolationFactor = 0.3f; // Adjust for smoother or more responsive movement
+
+    glm::vec3 newPosition = glm::vec3(physicsTransform[3]);
+    glm::vec3 currentPosition = glm::vec3(modelMatrix[3]);
+
+    glm::vec3 interpolatedPosition = glm::mix(currentPosition, newPosition, interpolationFactor);
+
+    glm::mat4 uprightRotation = glm::rotate(glm::mat4(1.0f), rotationAngle, glm::vec3(0, 1, 0));
+    modelMatrix = glm::translate(glm::mat4(1.0f), interpolatedPosition) * uprightRotation * initialTransform;
+
+    // Update movement struct if needed
+    movement.position = interpolatedPosition;
+}
+
 // Implement NPCAnimation methods
 void NPCAnimation::update(float deltaTime) {
     animationTime += deltaTime;
@@ -295,6 +337,10 @@ void NPCManager::initializeNPCs(float worldSize, const glm::mat4& originalModelM
 
 void NPCManager::updateNPCs(float deltaTime) {
     for (auto& npc : npcs) {
+        // Get the physics transform
+        glm::mat4 physicsTransform = physicsWorld.getTransform(npc->getPhysicsBodyIndex());
+        // Update the NPC's visual representation
+        npc->updateFromPhysics(physicsTransform);
         npc->update(deltaTime);
     }
     cleanupDeadNPCs();
@@ -316,7 +362,7 @@ void NPCManager::addNPC(const glm::vec3& position, const glm::mat4& initialTrans
     // Capsule parameters
     float radius = 0.45f;  // Adjust based on your NPC's width
     float height = 0.75f;  // Adjust based on your NPC's height
-    float mass = 75.0f;   // Keep the same mass or adjust as needed
+    float mass = 10.0f;   // Keep the same mass or adjust as needed
     float yOffset = 0.85f; // Adjust this value to move the capsule up or down
 
     // Add a capsule physics body for this NPC
@@ -380,4 +426,14 @@ void NPCManager::cleanupDeadNPCs() {
             return false;
         }),
         npcs.end());
+}
+
+void NPCManager::checkAndRemoveFallenNPCs(float threshold) {
+    for (int i = npcs.size() - 1; i >= 0; --i) {
+        glm::vec3 position = npcs[i]->getPosition();
+        if (position.y < threshold) {
+            std::cout << "Removing NPC at index " << i << " (position: " << position.y << ")" << std::endl;
+            removeNPC(i); // This should call your existing removeNPC method
+        }
+    }
 }

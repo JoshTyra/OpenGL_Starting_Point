@@ -106,6 +106,7 @@ public:
     int getPhysicsBodyIndex() const;
     void applyForce(const glm::vec3& force);
     void applyImpulse(const glm::vec3& impulse);
+    void updateFromPhysics(const glm::mat4& physicsTransform);
 
 private:
     const int instanceID;
@@ -125,6 +126,7 @@ private:
 
     int physicsBodyIndex = -1;
     PhysicsWorld& physicsWorld;
+    float rotationAngle = 0.0f; 
 
     void updateModelMatrix() noexcept;
     void updatePathFinding(float deltaTime);
@@ -154,6 +156,7 @@ public:
 
     void addNPC(const glm::vec3& position, const glm::mat4& initialTransform);
     void removeNPC(int id);
+    void checkAndRemoveFallenNPCs(float threshold);
     [[nodiscard]] NPC* getNPC(int id);
     [[nodiscard]] std::span<const std::unique_ptr<NPC>> getNPCs() const noexcept { return npcs; }
 
