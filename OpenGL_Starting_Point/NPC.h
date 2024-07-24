@@ -142,13 +142,13 @@ public:
         64;
 #endif
 
-    explicit NPCManager(size_t maxNPCs, PhysicsWorld& physicsWorld);
+    NPCManager(size_t maxNPCs, PhysicsWorld& physicsWorld);
     ~NPCManager() = default;
 
     NPCManager(const NPCManager&) = delete;
     NPCManager& operator=(const NPCManager&) = delete;
-    NPCManager(NPCManager&&) noexcept = default;
-    NPCManager& operator=(NPCManager&&) noexcept = default;
+    NPCManager(NPCManager&&) = delete;
+    NPCManager& operator=(NPCManager&&) = delete;
 
     void initializeNPCs(float worldSize, const glm::mat4& originalModelMatrix);
     void updateNPCs(float deltaTime);

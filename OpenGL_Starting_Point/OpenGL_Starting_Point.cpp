@@ -117,7 +117,7 @@ const float debugRayDuration = 2.0f;  // Show the ray for 2 seconds
 static float debugRayTimer = 0.0f;
 
 const float NPC_REMOVAL_THRESHOLD = -10.0f; // How far a npc falls in the scene, before being removed.
-NPCManager npcManager(NPCManager::MAX_NPCS, physicsWorld);
+std::unique_ptr<NPCManager, std::function<void(NPCManager*)>> g_npcManager;
 
 // Plane geometry shit
 unsigned int planeVAO, planeVBO;
@@ -168,7 +168,7 @@ void updateNPCAnimations(float deltaTime);
 void initUBOs();
 void updateUBOs(const glm::vec3& lightDir);
 void setupImGui(GLFWwindow* window);
-void initializeNPCs();
+void initializeNPCs(NPCManager& npcManager);
 void checkGLError(const char* operation);
 
 unsigned int loadCubemap(std::vector<std::string> faces) {
@@ -730,6 +730,16 @@ int main() {
 
     physicsWorld.initialize();
 
+    // Create NPCManager after OpenGL is initialized
+    g_npcManager = std::unique_ptr<NPCManager, std::function<void(NPCManager*)>>(
+        new NPCManager(NPCManager::MAX_NPCS, physicsWorld),
+        [](NPCManager* manager) {
+            // Custom cleanup logic here
+            std::cout << "Cleaning up NPCManager...\n";
+            delete manager;
+        }
+    );
+
     setupImGui(window);
 
     std::vector<std::string> Skyboxfaces{
@@ -822,14 +832,14 @@ int main() {
     originalModelMatrix = glm::rotate(originalModelMatrix, glm::radians(90.0f), glm::vec3(-1.0f, 0.0f, 0.0f));
     originalModelMatrix = glm::scale(originalModelMatrix, glm::vec3(0.025f));
 
-    initializeNPCs();
+    initializeNPCs(*g_npcManager);
 
     // Set up behavior trees for NPCs
     BT::BehaviorTreeFactory factory;
     BT::registerNodes(factory);
-    npcManager.setupBehaviorTrees(factory);
+    g_npcManager->setupBehaviorTrees(factory);
 
-    const auto& npcs = npcManager.getNPCs();
+    const auto& npcs = g_npcManager->getNPCs();
     for (size_t i = 0; i < npcs.size(); ++i) {
         instanceModels[i] = npcs[i]->getModelMatrix();
         instanceColors[i] = npcs[i]->getColor();
@@ -948,7 +958,7 @@ int main() {
         physicsWorld.update(deltaTime);
 
         // Check if an NPC is falling, for removal
-        npcManager.checkAndRemoveFallenNPCs(NPC_REMOVAL_THRESHOLD);
+        g_npcManager->checkAndRemoveFallenNPCs(NPC_REMOVAL_THRESHOLD);
 
         // Draw skybox here
         skybox.draw(camera.getViewMatrix(), camera.getProjectionMatrix(static_cast<float>(WIDTH) / static_cast<float>(HEIGHT)));
@@ -987,10 +997,15 @@ int main() {
         checkGLError("Updating UBOs");
 
         // Update NPCs
-        npcManager.updateNPCs(deltaTime);
+        if (g_npcManager) {
+            g_npcManager->updateNPCs(deltaTime);
+        }
+        else {
+            std::cerr << "NPCManager not initialized!" << std::endl;
+        }
 
         // Update instance data for GPU
-        const auto& npcs = npcManager.getNPCs();
+        const auto& npcs = g_npcManager->getNPCs();
         for (size_t i = 0; i < npcs.size(); ++i) {
             instanceModels[i] = npcs[i]->getModelMatrix();
             instanceColors[i] = npcs[i]->getColor();
@@ -1053,7 +1068,7 @@ int main() {
             }
 
             glBindVertexArray(mesh.VAO);
-            glDrawElementsInstanced(GL_TRIANGLES, mesh.indices.size(), GL_UNSIGNED_INT, 0, npcManager.getNPCs().size());
+            glDrawElementsInstanced(GL_TRIANGLES, mesh.indices.size(), GL_UNSIGNED_INT, 0, g_npcManager->getNPCs().size());
         }
 
         checkGLError("NPC Rendering");
@@ -1119,6 +1134,8 @@ int main() {
     glDeleteBuffers(1, &cameraUBO);
     glDeleteBuffers(1, &lightUBO);
     glDeleteProgram(debugShaderProgram);
+    // Cleanup g_npcManager
+    g_npcManager.reset();
 
     glfwTerminate();
     return 0;
@@ -1194,7 +1211,7 @@ void initTBO() {
 void updateNPCAnimations(float deltaTime) {
     std::vector<glm::mat4> allBoneTransforms;
 
-    const auto& npcs = npcManager.getNPCs();
+    const auto& npcs = g_npcManager->getNPCs();
     for (size_t i = 0; i < npcs.size(); ++i) {
         const auto& npc = npcs[i];
 
@@ -1268,12 +1285,12 @@ void setupImGui(GLFWwindow* window) {
     ImGui_ImplOpenGL3_Init("#version 430");
 }
 
-void initializeNPCs() {
+void initializeNPCs(NPCManager& npcManager) {
     glm::mat4 originalModelMatrix = glm::mat4(1.0f);
     originalModelMatrix = glm::rotate(originalModelMatrix, glm::radians(90.0f), glm::vec3(-1.0f, 0.0f, 0.0f));
     originalModelMatrix = glm::scale(originalModelMatrix, glm::vec3(0.025f));
 
-    npcManager.initializeNPCs(WORLD_SIZE, originalModelMatrix);
+    g_npcManager->initializeNPCs(WORLD_SIZE, originalModelMatrix);
 }
 
 void handleNPCClick(double mouseX, double mouseY) {
