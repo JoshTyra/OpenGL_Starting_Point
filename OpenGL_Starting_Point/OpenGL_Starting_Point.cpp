@@ -1336,7 +1336,7 @@ void handleNPCClick(double mouseX, double mouseY) {
 
             // Apply an impulse to push the NPC
             glm::vec3 impulseDir = glm::normalize(camera.getFront());
-            float impulseMagnitude = 35.0f; // Adjust this value to control the push strength
+            float impulseMagnitude = 60.0f; // Adjust this value to control the push strength
             glm::vec3 impulse = impulseDir * impulseMagnitude;
 
             // We need to remove the const-ness to apply the impulse
