@@ -51,7 +51,7 @@ int PhysicsWorld::addRigidBody(const glm::vec3& position, const glm::vec3& size,
     return rigidBodies.size() - 1;  // Return the index of the new body
 }
 
-int PhysicsWorld::addCapsuleRigidBody(const glm::vec3& position, float radius, float height, float mass, float yOffset) {
+int PhysicsWorld::addCapsuleRigidBody(const glm::vec3& position, float radius, float height, float mass, float yOffset, int npcUniqueID) {
     btCollisionShape* capsuleShape = new btCapsuleShape(radius, height);
 
     btTransform transform;
@@ -74,14 +74,15 @@ int PhysicsWorld::addCapsuleRigidBody(const glm::vec3& position, float radius, f
     btDefaultMotionState* motionState = new btDefaultMotionState(transform);
     btRigidBody::btRigidBodyConstructionInfo rbInfo(mass, motionState, compoundShape, localInertia);
     btRigidBody* body = new btRigidBody(rbInfo);
-    body->setDamping(0.1f, 0.9f);  // Linear damping, Angular damping
-    // Limit angular velocity to prevent rapid spinning
+    body->setDamping(0.1f, 0.9f);
     body->setAngularFactor(btVector3(0.2f, 1.0f, 0.2f));
     body->setFriction(0.8f);
 
+    body->setUserIndex(npcUniqueID);  // Set the user index to the NPC's unique ID
+
     dynamicsWorld->addRigidBody(body);
     rigidBodies.push_back(body);
-    return rigidBodies.size() - 1;
+    return rigidBodies.size() - 1;  // Return the index in the rigidBodies vector
 }
 
 glm::mat4 PhysicsWorld::getTransform(int index) const {
@@ -113,11 +114,17 @@ btRigidBody* PhysicsWorld::createRigidBody(const glm::vec3& position, const glm:
 
 void PhysicsWorld::removeRigidBody(int index) {
     if (index >= 0 && index < rigidBodies.size()) {
-        dynamicsWorld->removeRigidBody(rigidBodies[index]);
-        delete rigidBodies[index]->getMotionState();
-        delete rigidBodies[index]->getCollisionShape();
-        delete rigidBodies[index];
+        btRigidBody* body = rigidBodies[index];
+        dynamicsWorld->removeRigidBody(body);
+        delete body->getMotionState();
+        delete body->getCollisionShape();
+        delete body;
         rigidBodies.erase(rigidBodies.begin() + index);
+
+        // Update the indices of the remaining bodies
+        for (int i = index; i < rigidBodies.size(); ++i) {
+            rigidBodies[i]->setUserIndex(i);
+        }
     }
 }
 
@@ -166,4 +173,12 @@ btRigidBody* PhysicsWorld::getRigidBody(int index) const {
         return rigidBodies[index];
     }
     return nullptr;
+}
+
+int PhysicsWorld::getRigidBodyIndex(const btRigidBody* body) const {
+    auto it = std::find(rigidBodies.begin(), rigidBodies.end(), body);
+    if (it != rigidBodies.end()) {
+        return std::distance(rigidBodies.begin(), it);
+    }
+    return -1;
 }

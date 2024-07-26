@@ -5,7 +5,7 @@
 #include "BehaviorTrees.h"
 
 NPC::NPC(int id, const glm::vec3& startPosition, const glm::mat4& initialTransform, PhysicsWorld& physicsWorld)
-    : instanceID(id),
+    :uniqueID(id),
     initialTransform(initialTransform),
     color(getRandomColor()),
     physicsWorld(physicsWorld),
@@ -190,7 +190,7 @@ void NPC::updateBehavior(float deltaTime) {
         auto status = behaviorTree.tickOnce();
     }
     else {
-        std::cerr << "No root node for NPC " << getID() << std::endl;
+        std::cerr << "No root node for NPC " << getUniqueID() << std::endl;
     }
 }
 
@@ -240,12 +240,37 @@ void NPC::applyForce(const glm::vec3& force) {
 }
 
 void NPC::applyImpulse(const glm::vec3& impulse) {
-    physicsWorld.applyImpulse(physicsBodyIndex, impulse);
+    btRigidBody* body = physicsWorld.getRigidBody(physicsBodyIndex);
+    if (body) {
+        body->activate(true);
+        btVector3 btImpulse(impulse.x, impulse.y, impulse.z);
+        body->applyCentralImpulse(btImpulse);
+
+        std::cout << "Applied impulse to NPC with ID: " << uniqueID << std::endl;
+        std::cout << "Applied impulse: " << btImpulse.x() << ", " << btImpulse.y() << ", " << btImpulse.z() << std::endl;
+        std::cout << "Body mass: " << 1.0f / body->getInvMass() << std::endl;
+        std::cout << "Body velocity after impulse: "
+            << body->getLinearVelocity().x() << ", "
+            << body->getLinearVelocity().y() << ", "
+            << body->getLinearVelocity().z() << std::endl;
+        std::cout << "Body is active: " << (body->isActive() ? "Yes" : "No") << std::endl;
+    }
+    else {
+        std::cerr << "Failed to apply impulse to NPC with ID: " << uniqueID
+            << ". Rigid body not found. Physics body index: " << physicsBodyIndex << std::endl;
+    }
 }
 
 void NPC::setPhysicsBodyIndex(int index) {
     if (index >= 0) {
         physicsBodyIndex = index;
+        btRigidBody* body = physicsWorld.getRigidBody(physicsBodyIndex);
+        if (body) {
+            body->setUserIndex(uniqueID);
+        }
+        else {
+            std::cerr << "Warning: No rigid body found for physics body index " << index << std::endl;
+        }
     }
     else {
         std::cerr << "Invalid physics body index: " << index << std::endl;
@@ -320,15 +345,16 @@ NPCManager::NPCManager(size_t maxNPCs, PhysicsWorld& physicsWorld)
 
 void NPCManager::initializeNPCs(float worldSize, const glm::mat4& originalModelMatrix) {
     this->worldSize = worldSize;
-    size_t gridSide = static_cast<size_t>(std::ceil(std::sqrt(maxNPCs)));
-    float spacing = worldSize / gridSide;
+
+    // Create a random number generator
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_real_distribution<> dis(-worldSize / 2, worldSize / 2);
 
     for (size_t i = 0; i < maxNPCs; ++i) {
-        size_t row = i / gridSide;
-        size_t col = i % gridSide;
-
-        float x = -worldSize / 2 + spacing * col + spacing / 2;
-        float z = -worldSize / 2 + spacing * row + spacing / 2;
+        // Generate random x and z coordinates within the world bounds
+        float x = dis(gen);
+        float z = dis(gen);
 
         glm::vec3 position(x, 0.0f, z);
         addNPC(position, originalModelMatrix);
@@ -336,10 +362,8 @@ void NPCManager::initializeNPCs(float worldSize, const glm::mat4& originalModelM
 }
 
 void NPCManager::updateNPCs(float deltaTime) {
-    for (auto& npc : npcs) {
-        // Get the physics transform
+    for (auto& [id, npc] : npcs) {
         glm::mat4 physicsTransform = physicsWorld.getTransform(npc->getPhysicsBodyIndex());
-        // Update the NPC's visual representation
         npc->updateFromPhysics(physicsTransform);
         npc->update(deltaTime);
     }
@@ -347,7 +371,7 @@ void NPCManager::updateNPCs(float deltaTime) {
 }
 
 void NPCManager::setupBehaviorTrees(BT::BehaviorTreeFactory& factory) {
-    for (auto& npc : npcs) {
+    for (auto& [id, npc] : npcs) {
         auto tree = factory.createTreeFromText(BT::getMainTreeXML());
         npc->setupBehaviorTree(std::move(tree));
     }
@@ -359,17 +383,18 @@ void NPCManager::addNPC(const glm::vec3& position, const glm::mat4& initialTrans
         return;
     }
 
-    // Capsule parameters
-    float radius = 0.45f;  // Adjust based on your NPC's width
-    float height = 0.75f;  // Adjust based on your NPC's height
-    float mass = 10.0f;   // Keep the same mass or adjust as needed
-    float yOffset = 0.85f; // Adjust this value to move the capsule up or down
+    int uniqueID = nextUniqueID++;
 
-    // Add a capsule physics body for this NPC
-    int physicsBodyIndex = physicsWorld.addCapsuleRigidBody(position, radius, height, mass, yOffset);
+    // Capsule parameters
+    float radius = 0.45f;
+    float height = 0.75f;
+    float mass = 10.0f;
+    float yOffset = 0.85f;
+
+    int physicsBodyIndex = physicsWorld.addCapsuleRigidBody(position, radius, height, mass, yOffset, uniqueID);
 
     try {
-        auto npc = std::make_unique<NPC>(npcs.size(), position, initialTransform, physicsWorld);
+        auto npc = std::make_unique<NPC>(uniqueID, position, initialTransform, physicsWorld);
         npc->setPhysicsBodyIndex(physicsBodyIndex);
 
         BT::BehaviorTreeFactory factory;
@@ -378,10 +403,16 @@ void NPCManager::addNPC(const glm::vec3& position, const glm::mat4& initialTrans
         auto tree = factory.createTreeFromText(BT::getMainTreeXML());
         if (tree.rootNode()) {
             npc->setupBehaviorTree(std::move(tree));
-            npcs.push_back(std::move(npc));
+            npcs[uniqueID] = std::move(npc);
+
+            // Set the user index of the rigid body to the NPC's unique ID
+            btRigidBody* body = physicsWorld.getRigidBody(physicsBodyIndex);
+            if (body) {
+                body->setUserIndex(uniqueID);
+            }
         }
         else {
-            std::cerr << "Error: Failed to create a valid behavior tree for NPC ID: " << npc->getID() << std::endl;
+            std::cerr << "Error: Failed to create a valid behavior tree for NPC ID: " << npc->getUniqueID() << std::endl;
             physicsWorld.removeRigidBody(physicsBodyIndex);
             return;
         }
@@ -394,18 +425,25 @@ void NPCManager::addNPC(const glm::vec3& position, const glm::mat4& initialTrans
 }
 
 void NPCManager::removeNPC(int id) {
-    auto it = std::find_if(npcs.begin(), npcs.end(),
-        [id](const auto& npc) { return npc->getID() == id; });
+    auto it = npcs.find(id);
     if (it != npcs.end()) {
-        physicsWorld.removeRigidBody((*it)->getPhysicsBodyIndex());
+        int physicsBodyIndex = it->second->getPhysicsBodyIndex();
+        physicsWorld.removeRigidBody(physicsBodyIndex);
         npcs.erase(it);
+
+        // Update physics body indices for remaining NPCs
+        for (auto& [npcId, npc] : npcs) {
+            int currentIndex = npc->getPhysicsBodyIndex();
+            if (currentIndex > physicsBodyIndex) {
+                npc->setPhysicsBodyIndex(currentIndex - 1);
+            }
+        }
     }
 }
 
 NPC* NPCManager::getNPC(int id) {
-    auto it = std::find_if(npcs.begin(), npcs.end(),
-        [id](const auto& npc) { return npc->getID() == id; });
-    return it != npcs.end() ? it->get() : nullptr;
+    auto it = npcs.find(id);
+    return it != npcs.end() ? it->second.get() : nullptr;
 }
 
 void NPCManager::handleNPCInteractions() {
@@ -417,23 +455,37 @@ void NPCManager::updatePathfinding() {
 }
 
 void NPCManager::cleanupDeadNPCs() {
-    npcs.erase(std::remove_if(npcs.begin(), npcs.end(),
-        [this](const auto& npc) {
-            if (!npc->isAlive()) {
-                physicsWorld.removeRigidBody(npc->getPhysicsBodyIndex());
-                return true;
-            }
-            return false;
-        }),
-        npcs.end());
+    for (auto it = npcs.begin(); it != npcs.end(); ) {
+        if (!it->second->isAlive()) {
+            physicsWorld.removeRigidBody(it->second->getPhysicsBodyIndex());
+            it = npcs.erase(it);
+        }
+        else {
+            ++it;
+        }
+    }
 }
 
 void NPCManager::checkAndRemoveFallenNPCs(float threshold) {
-    for (int i = npcs.size() - 1; i >= 0; --i) {
-        glm::vec3 position = npcs[i]->getPosition();
+    std::vector<int> npcToRemove;
+    for (const auto& [id, npc] : npcs) {
+        glm::vec3 position = npc->getPosition();
         if (position.y < threshold) {
-            std::cout << "Removing NPC at index " << i << " (position: " << position.y << ")" << std::endl;
-            removeNPC(i); // This should call your existing removeNPC method
+            std::cout << "Marking NPC with ID " << id << " for removal (position: " << position.y << ")" << std::endl;
+            npcToRemove.push_back(id);
         }
+    }
+    for (int id : npcToRemove) {
+        removeNPC(id);
+    }
+}
+
+void NPCManager::debugPrintNPCs() const {
+    std::cout << "Current NPCs:" << std::endl;
+    for (const auto& [id, npc] : npcs) {
+        std::cout << "NPC ID: " << id
+            << ", Physics Body Index: " << npc->getPhysicsBodyIndex()
+            << ", Position: " << glm::to_string(npc->getPosition())
+            << std::endl;
     }
 }

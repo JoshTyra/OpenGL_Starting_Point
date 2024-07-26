@@ -125,10 +125,6 @@ unsigned int planeTexture;
 unsigned int planeShaderProgram;
 
 // Pathfinding shit
-const int GRID_SIZE = 100; // This is the one you'll change when you want to adjust the grid
-const float CELL_SIZE = 1.0f; // Size of each grid cell in world units
-const float WORLD_SIZE = GRID_SIZE * CELL_SIZE; // Total world size
-std::vector<std::vector<bool>> navigationGrid(GRID_SIZE, std::vector<bool>(GRID_SIZE, true));
 std::vector<glm::vec3> currentPath;
 int currentPathIndex = 0;
 glm::vec3 currentDestination;
@@ -168,7 +164,6 @@ void updateNPCAnimations(float deltaTime);
 void initUBOs();
 void updateUBOs(const glm::vec3& lightDir);
 void setupImGui(GLFWwindow* window);
-void initializeNPCs(NPCManager& npcManager);
 void checkGLError(const char* operation);
 
 unsigned int loadCubemap(std::vector<std::string> faces) {
@@ -774,11 +769,11 @@ int main() {
     initPlaneShaders();
 
     // Create the plane with specific size and texture tiling
-    float planeWidth = WORLD_SIZE / 2;
-    float planeHeight = WORLD_SIZE / 2;
-    float textureTiling = WORLD_SIZE / 2; // Example value for tiling
+    float planeWidth = 100.0f;  // You can adjust this value
+    float planeHeight = 100.0f; // You can adjust this value
+    float textureTiling = 100.0f; // Adjust for desired tiling
     createPlane(planeWidth, planeHeight, textureTiling);
-    physicsWorld.addGroundPlane(0.0f, WORLD_SIZE, WORLD_SIZE);
+    physicsWorld.addGroundPlane(0.0f, planeWidth, planeHeight);
 
     // Load the plane texture
     loadPlaneTexture();
@@ -828,11 +823,13 @@ int main() {
     std::vector<float> instanceEndFrames(NPCManager::MAX_NPCS);
     std::vector<int> instanceIDs(NPCManager::MAX_NPCS);
 
+    // In main() function
+    float worldSize = 100.0f; // You can adjust this value
     glm::mat4 originalModelMatrix = glm::mat4(1.0f);
     originalModelMatrix = glm::rotate(originalModelMatrix, glm::radians(90.0f), glm::vec3(-1.0f, 0.0f, 0.0f));
     originalModelMatrix = glm::scale(originalModelMatrix, glm::vec3(0.025f));
 
-    initializeNPCs(*g_npcManager);
+    g_npcManager->initializeNPCs(worldSize, originalModelMatrix);
 
     // Set up behavior trees for NPCs
     BT::BehaviorTreeFactory factory;
@@ -840,13 +837,15 @@ int main() {
     g_npcManager->setupBehaviorTrees(factory);
 
     const auto& npcs = g_npcManager->getNPCs();
-    for (size_t i = 0; i < npcs.size(); ++i) {
-        instanceModels[i] = npcs[i]->getModelMatrix();
-        instanceColors[i] = npcs[i]->getColor();
-        instanceAnimationTimes[i] = npcs[i]->getAnimation().animationTime;
-        instanceStartFrames[i] = npcs[i]->getAnimation().startFrame;
-        instanceEndFrames[i] = npcs[i]->getAnimation().endFrame;
-        instanceIDs[i] = static_cast<int>(i);
+    size_t index = 0;
+    for (const auto& [id, npc] : npcs) {
+        instanceModels[index] = npc->getModelMatrix();
+        instanceColors[index] = npc->getColor();
+        instanceAnimationTimes[index] = npc->getAnimation().animationTime;
+        instanceStartFrames[index] = npc->getAnimation().startFrame;
+        instanceEndFrames[index] = npc->getAnimation().endFrame;
+        instanceIDs[index] = id;
+        index++;
     }
 
     // The rest of the code remains the same
@@ -1006,12 +1005,13 @@ int main() {
 
         // Update instance data for GPU
         const auto& npcs = g_npcManager->getNPCs();
-        for (size_t i = 0; i < npcs.size(); ++i) {
-            instanceModels[i] = npcs[i]->getModelMatrix();
-            instanceColors[i] = npcs[i]->getColor();
-            instanceAnimationTimes[i] = npcs[i]->getAnimation().animationTime;
-            instanceStartFrames[i] = npcs[i]->getAnimation().startFrame;
-            instanceEndFrames[i] = npcs[i]->getAnimation().endFrame;
+        for (const auto& [id, npc] : npcs) {
+            instanceModels[id] = npc->getModelMatrix();
+            instanceColors[id] = npc->getColor();
+            instanceAnimationTimes[id] = npc->getAnimation().animationTime;
+            instanceStartFrames[id] = npc->getAnimation().startFrame;
+            instanceEndFrames[id] = npc->getAnimation().endFrame;
+            instanceIDs[id] = id;
         }
 
         // Upload instance data to GPU
@@ -1160,14 +1160,14 @@ void windowIconifyCallback(GLFWwindow* window, int iconified) {
 
 void createPlane(float width, float height, float textureTiling) {
     float planeVertices[] = {
-        // positions                        // texture coords
-         WORLD_SIZE / 2,  0.0f,  WORLD_SIZE / 2,   textureTiling, 0.0f,
-        -WORLD_SIZE / 2,  0.0f,  WORLD_SIZE / 2,   0.0f, 0.0f,
-        -WORLD_SIZE / 2,  0.0f, -WORLD_SIZE / 2,   0.0f, textureTiling,
+        // positions          // texture coords
+         width / 2,  0.0f,  height / 2,   textureTiling, 0.0f,
+        -width / 2,  0.0f,  height / 2,   0.0f, 0.0f,
+        -width / 2,  0.0f, -height / 2,   0.0f, textureTiling,
 
-         WORLD_SIZE / 2,  0.0f,  WORLD_SIZE / 2,   textureTiling, 0.0f,
-        -WORLD_SIZE / 2,  0.0f, -WORLD_SIZE / 2,   0.0f, textureTiling,
-         WORLD_SIZE / 2,  0.0f, -WORLD_SIZE / 2,   textureTiling, textureTiling
+         width / 2,  0.0f,  height / 2,   textureTiling, 0.0f,
+        -width / 2,  0.0f, -height / 2,   0.0f, textureTiling,
+         width / 2,  0.0f, -height / 2,   textureTiling, textureTiling
     };
 
     glGenVertexArrays(1, &planeVAO);
@@ -1212,9 +1212,7 @@ void updateNPCAnimations(float deltaTime) {
     std::vector<glm::mat4> allBoneTransforms;
 
     const auto& npcs = g_npcManager->getNPCs();
-    for (size_t i = 0; i < npcs.size(); ++i) {
-        const auto& npc = npcs[i];
-
+    for (const auto& [id, npc] : npcs) {
         std::vector<glm::mat4> npcBoneTransforms(modelLoader.getNumBones(), glm::mat4(1.0f));
         modelLoader.updateBoneTransforms(npc->getAnimation().animationTime,
             animationNames[npc->getAnimation().currentAnimationIndex],
@@ -1285,22 +1283,12 @@ void setupImGui(GLFWwindow* window) {
     ImGui_ImplOpenGL3_Init("#version 430");
 }
 
-void initializeNPCs(NPCManager& npcManager) {
-    glm::mat4 originalModelMatrix = glm::mat4(1.0f);
-    originalModelMatrix = glm::rotate(originalModelMatrix, glm::radians(90.0f), glm::vec3(-1.0f, 0.0f, 0.0f));
-    originalModelMatrix = glm::scale(originalModelMatrix, glm::vec3(0.025f));
-
-    g_npcManager->initializeNPCs(WORLD_SIZE, originalModelMatrix);
-}
-
 void handleNPCClick(double mouseX, double mouseY) {
     glm::vec3 rayStart, rayEnd;
     calculateMouseRay(mouseX, mouseY, rayStart, rayEnd);
-
     debugRayStart = rayStart;
     debugRayEnd = rayEnd;
     debugRayActive = true;
-
     std::cout << "Ray Start: " << glm::to_string(rayStart) << std::endl;
     std::cout << "Ray End: " << glm::to_string(rayEnd) << std::endl;
 
@@ -1316,44 +1304,32 @@ void handleNPCClick(double mouseX, double mouseY) {
     );
 
     if (rayCallback.hasHit()) {
-        std::cout << "Ray hit something!" << std::endl;
-        std::cout << "Ray hit at point: "
-            << rayCallback.m_hitPointWorld.x() << ", "
-            << rayCallback.m_hitPointWorld.y() << ", "
-            << rayCallback.m_hitPointWorld.z() << std::endl;
-
         const btRigidBody* body = btRigidBody::upcast(rayCallback.m_collisionObject);
         if (body) {
-            std::cout << "Hit a rigid body!" << std::endl;
+            int npcUniqueID = body->getUserIndex();
+            NPC* npc = g_npcManager->getNPC(npcUniqueID);
 
-            btVector3 position = body->getWorldTransform().getOrigin();
-            btVector3 velocity = body->getLinearVelocity();
-            float mass = 1.0f / body->getInvMass();
+            if (npc) {
+                glm::vec3 impulseDir = glm::normalize(camera.getFront());
+                float impulseMagnitude = 60.0f;
+                glm::vec3 impulse = impulseDir * impulseMagnitude;
 
-            std::cout << "Body position: " << position.x() << ", " << position.y() << ", " << position.z() << std::endl;
-            std::cout << "Body velocity: " << velocity.x() << ", " << velocity.y() << ", " << velocity.z() << std::endl;
-            std::cout << "Body mass: " << mass << std::endl;
+                npc->applyImpulse(impulse);
 
-            // Apply an impulse to push the NPC
-            glm::vec3 impulseDir = glm::normalize(camera.getFront());
-            float impulseMagnitude = 60.0f; // Adjust this value to control the push strength
-            glm::vec3 impulse = impulseDir * impulseMagnitude;
-
-            // We need to remove the const-ness to apply the impulse
-            btRigidBody* nonConstBody = const_cast<btRigidBody*>(body);
-            nonConstBody->activate(true); // Wake up the body
-            nonConstBody->applyCentralImpulse(btVector3(impulse.x, impulse.y, impulse.z));
-
-            std::cout << "Applied impulse: " << glm::to_string(impulse) << std::endl;
-
-            // Print updated velocity after applying impulse
-            velocity = nonConstBody->getLinearVelocity();
-            std::cout << "Updated body velocity: " << velocity.x() << ", " << velocity.y() << ", " << velocity.z() << std::endl;
+                std::cout << "Applied impulse to NPC with ID: " << npc->getUniqueID() << std::endl;
+            }
+            else {
+                std::cout << "Warning: No matching NPC found for body user index: " << npcUniqueID << std::endl;
+                // Instead of removing the body, let's print more debug info
+                std::cout << "Physics body position: " << body->getWorldTransform().getOrigin().x() << ", "
+                    << body->getWorldTransform().getOrigin().y() << ", "
+                    << body->getWorldTransform().getOrigin().z() << std::endl;
+                std::cout << "Total NPCs: " << g_npcManager->getNPCs().size() << std::endl;
+            }
         }
     }
-    else {
-        std::cout << "Ray did not hit anything." << std::endl;
-    }
+
+    g_npcManager->debugPrintNPCs();
 }
 
 void calculateMouseRay(double mouseX, double mouseY, glm::vec3& rayStart, glm::vec3& rayEnd) {

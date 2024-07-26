@@ -2,6 +2,7 @@
 #pragma once
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtx/string_cast.hpp>
 #include <vector>
 #include <string>
 #include <memory>
@@ -9,6 +10,7 @@
 #include <span>
 #include <behaviortree_cpp/bt_factory.h>
 #include "PhysicsWorld.h"
+#include <unordered_map>
 
 enum class NPCState {
     Idle,
@@ -90,7 +92,7 @@ public:
     void setupBehaviorTree(BT::Tree tree);
     void updateBehavior(float deltaTime);
 
-    [[nodiscard]] constexpr int getID() const noexcept { return instanceID; }
+    [[nodiscard]] int getUniqueID() const noexcept { return uniqueID; }
     [[nodiscard]] const glm::mat4& getModelMatrix() const noexcept { return modelMatrix; }
     [[nodiscard]] const glm::vec3& getPosition() const noexcept { return movement.position; }
     [[nodiscard]] const glm::vec3& getColor() const noexcept { return color; }
@@ -109,7 +111,7 @@ public:
     void updateFromPhysics(const glm::mat4& physicsTransform);
 
 private:
-    const int instanceID;
+    const int uniqueID;
     NPCState currentState{ NPCState::Idle };
     NPCAnimation animation;
     NPCMovement movement;
@@ -158,13 +160,17 @@ public:
     void removeNPC(int id);
     void checkAndRemoveFallenNPCs(float threshold);
     [[nodiscard]] NPC* getNPC(int id);
-    [[nodiscard]] std::span<const std::unique_ptr<NPC>> getNPCs() const noexcept { return npcs; }
+    [[nodiscard]] const std::unordered_map<int, std::unique_ptr<NPC>>& getNPCs() const noexcept { return npcs; }
+    PhysicsWorld& getPhysicsWorld() { return physicsWorld; }
 
     void handleNPCInteractions();
     void updatePathfinding();
 
+    void debugPrintNPCs() const;
+
 private:
-    std::vector<std::unique_ptr<NPC>> npcs;
+    std::unordered_map<int, std::unique_ptr<NPC>> npcs;
+    int nextUniqueID = 0;
     const size_t maxNPCs;
     float worldSize{ 0.0f };
     PhysicsWorld& physicsWorld;
