@@ -245,19 +245,6 @@ void NPC::applyImpulse(const glm::vec3& impulse) {
         body->activate(true);
         btVector3 btImpulse(impulse.x, impulse.y, impulse.z);
         body->applyCentralImpulse(btImpulse);
-
-        std::cout << "Applied impulse to NPC with ID: " << uniqueID << std::endl;
-        std::cout << "Applied impulse: " << btImpulse.x() << ", " << btImpulse.y() << ", " << btImpulse.z() << std::endl;
-        std::cout << "Body mass: " << 1.0f / body->getInvMass() << std::endl;
-        std::cout << "Body velocity after impulse: "
-            << body->getLinearVelocity().x() << ", "
-            << body->getLinearVelocity().y() << ", "
-            << body->getLinearVelocity().z() << std::endl;
-        std::cout << "Body is active: " << (body->isActive() ? "Yes" : "No") << std::endl;
-    }
-    else {
-        std::cerr << "Failed to apply impulse to NPC with ID: " << uniqueID
-            << ". Rigid body not found. Physics body index: " << physicsBodyIndex << std::endl;
     }
 }
 
@@ -471,7 +458,6 @@ void NPCManager::checkAndRemoveFallenNPCs(float threshold) {
     for (const auto& [id, npc] : npcs) {
         glm::vec3 position = npc->getPosition();
         if (position.y < threshold) {
-            std::cout << "Marking NPC with ID " << id << " for removal (position: " << position.y << ")" << std::endl;
             npcToRemove.push_back(id);
         }
     }

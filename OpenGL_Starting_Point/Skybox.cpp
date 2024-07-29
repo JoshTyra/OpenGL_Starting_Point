@@ -60,7 +60,6 @@ Skybox::Skybox(const std::vector<std::string>& faces) : m_isValid(false), m_text
     glDeleteShader(fragmentShader);
 
     m_isValid = true;
-    std::cout << "Skybox initialization complete." << std::endl;
 }
 
 Skybox::~Skybox() {
@@ -68,7 +67,6 @@ Skybox::~Skybox() {
     glDeleteBuffers(1, &VBO);
     glDeleteTextures(1, &cubemapTexture);
     glDeleteProgram(shaderProgram);
-    std::cout << "Skybox resources cleaned up." << std::endl;
 }
 
 void Skybox::draw(const glm::mat4& view, const glm::mat4& projection) {
@@ -128,8 +126,6 @@ unsigned int Skybox::loadCubemap(const std::vector<std::string>& faces) {
                 m_textureWidth = width;
                 m_textureHeight = height;
             }
-            std::cout << "Loaded cubemap face " << i << ": " << faces[i]
-                << " (" << width << "x" << height << ", " << nrChannels << " channels)" << std::endl;
         }
         else {
             std::cerr << "Cubemap texture failed to load at path: " << faces[i] << std::endl;

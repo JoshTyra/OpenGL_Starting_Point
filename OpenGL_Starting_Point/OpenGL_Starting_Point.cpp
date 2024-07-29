@@ -729,8 +729,6 @@ int main() {
     g_npcManager = std::unique_ptr<NPCManager, std::function<void(NPCManager*)>>(
         new NPCManager(NPCManager::MAX_NPCS, physicsWorld),
         [](NPCManager* manager) {
-            // Custom cleanup logic here
-            std::cout << "Cleaning up NPCManager...\n";
             delete manager;
         }
     );
@@ -751,8 +749,6 @@ int main() {
     if (!skybox.isValid()) {
         std::cerr << "Skybox initialization failed!" << std::endl;
     }
-
-    skybox.printDebugInfo();
 
     // Initialize TBO
     initTBO();
@@ -1308,8 +1304,6 @@ void handleNPCClick(double mouseX, double mouseY) {
     debugRayStart = rayStart;
     debugRayEnd = rayEnd;
     debugRayActive = true;
-    std::cout << "Ray Start: " << glm::to_string(rayStart) << std::endl;
-    std::cout << "Ray End: " << glm::to_string(rayEnd) << std::endl;
 
     btCollisionWorld::ClosestRayResultCallback rayCallback(
         btVector3(rayStart.x, rayStart.y, rayStart.z),
@@ -1334,21 +1328,9 @@ void handleNPCClick(double mouseX, double mouseY) {
                 glm::vec3 impulse = impulseDir * impulseMagnitude;
 
                 npc->applyImpulse(impulse);
-
-                std::cout << "Applied impulse to NPC with ID: " << npc->getUniqueID() << std::endl;
-            }
-            else {
-                std::cout << "Warning: No matching NPC found for body user index: " << npcUniqueID << std::endl;
-                // Instead of removing the body, let's print more debug info
-                std::cout << "Physics body position: " << body->getWorldTransform().getOrigin().x() << ", "
-                    << body->getWorldTransform().getOrigin().y() << ", "
-                    << body->getWorldTransform().getOrigin().z() << std::endl;
-                std::cout << "Total NPCs: " << g_npcManager->getNPCs().size() << std::endl;
             }
         }
     }
-
-    g_npcManager->debugPrintNPCs();
 }
 
 void calculateMouseRay(double mouseX, double mouseY, glm::vec3& rayStart, glm::vec3& rayEnd) {

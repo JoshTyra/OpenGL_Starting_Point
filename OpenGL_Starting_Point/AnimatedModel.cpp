@@ -37,18 +37,6 @@ void ModelLoader::loadModel(const std::string& path) {
         return;
     }
 
-    std::cout << "Model loaded successfully." << std::endl;
-
-    if (scene->mNumAnimations > 0) {
-        std::cout << "Number of animations: " << scene->mNumAnimations << std::endl;
-        for (unsigned int i = 0; i < scene->mNumAnimations; ++i) {
-            std::cout << "Animation " << i << " duration: " << scene->mAnimations[i]->mDuration << std::endl;
-        }
-    }
-    else {
-        std::cout << "No animations found in the model." << std::endl;
-    }
-
     aggregatedVertices.clear();
     processNode(scene->mRootNode, scene);
     loadedModelAABB = computeAABB(aggregatedVertices);
