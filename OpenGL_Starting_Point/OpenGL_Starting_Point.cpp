@@ -1005,14 +1005,33 @@ int main() {
 
         // Update instance data for GPU
         const auto& npcs = g_npcManager->getNPCs();
+        size_t npcIndex = 0;
         for (const auto& [id, npc] : npcs) {
-            instanceModels[id] = npc->getModelMatrix();
-            instanceColors[id] = npc->getColor();
-            instanceAnimationTimes[id] = npc->getAnimation().animationTime;
-            instanceStartFrames[id] = npc->getAnimation().startFrame;
-            instanceEndFrames[id] = npc->getAnimation().endFrame;
-            instanceIDs[id] = id;
+            if (npcIndex >= NPCManager::MAX_NPCS) {
+                std::cerr << "Warning: More NPCs than MAX_NPCS. Some NPCs will not be rendered." << std::endl;
+                break;
+            }
+            instanceModels[npcIndex] = npc->getModelMatrix();
+            instanceColors[npcIndex] = npc->getColor();
+            instanceAnimationTimes[npcIndex] = npc->getAnimation().animationTime;
+            instanceStartFrames[npcIndex] = npc->getAnimation().startFrame;
+            instanceEndFrames[npcIndex] = npc->getAnimation().endFrame;
+            instanceIDs[npcIndex] = id;
+            npcIndex++;
         }
+
+        // Clear any unused entries
+        for (size_t i = npcIndex; i < NPCManager::MAX_NPCS; i++) {
+            instanceModels[i] = glm::mat4(1.0f);
+            instanceColors[i] = glm::vec3(0.0f);
+            instanceAnimationTimes[i] = 0.0f;
+            instanceStartFrames[i] = 0.0f;
+            instanceEndFrames[i] = 0.0f;
+            instanceIDs[i] = -1;  // Use -1 or another invalid ID to indicate unused entry
+        }
+
+        // Update the number of instances to render
+        size_t numInstancesToRender = npcIndex;
 
         // Upload instance data to GPU
         glBindBuffer(GL_ARRAY_BUFFER, instanceVBO);
@@ -1068,7 +1087,7 @@ int main() {
             }
 
             glBindVertexArray(mesh.VAO);
-            glDrawElementsInstanced(GL_TRIANGLES, mesh.indices.size(), GL_UNSIGNED_INT, 0, g_npcManager->getNPCs().size());
+            glDrawElementsInstanced(GL_TRIANGLES, mesh.indices.size(), GL_UNSIGNED_INT, 0, numInstancesToRender);
         }
 
         checkGLError("NPC Rendering");
