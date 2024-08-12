@@ -13,16 +13,13 @@ obj/
 *.VC.db
 *.VC.opendb
 
-# Ignore Visual Studio project files
-*.vcxproj
-*.vcxproj.filters
+# Track Visual Studio project files
+#*.vcxproj
+#*.vcxproj.filters
+#*.sln
+
+# Still ignore user-specific project files
 *.vcxproj.user
-*.vcproj
-*.vcproj.filters
-*.vcproj.user
-*.sln
-*.vcxitems
-*.vcxitems.filters
 
 # Ignore Visual Studio Code and JetBrains files
 .vs/

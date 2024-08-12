@@ -1,16 +1,7 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
-    <ClCompile Include="Skybox.cpp">
-      <Filter>source</Filter>
-    </ClCompile>
-    <ClCompile Include="PhysicsWorld.cpp">
-      <Filter>source</Filter>
-    </ClCompile>
     <ClCompile Include="OpenGL_Starting_Point.cpp">
-      <Filter>source</Filter>
-    </ClCompile>
-    <ClCompile Include="NPC.cpp">
       <Filter>source</Filter>
     </ClCompile>
     <ClCompile Include="..\..\..\..\Desktop\imgui-master\imgui_widgets.cpp">
@@ -37,21 +28,6 @@
     <ClCompile Include="..\..\FrustumDebug\FrustumDebug\Camera.cpp">
       <Filter>source</Filter>
     </ClCompile>
-    <ClCompile Include="BehaviorTrees.cpp">
-      <Filter>source</Filter>
-    </ClCompile>
-    <ClCompile Include="AnimatedModel.cpp">
-      <Filter>source</Filter>
-    </ClCompile>
-    <ClCompile Include="PhysicsDebugDrawer.cpp">
-      <Filter>source</Filter>
-    </ClCompile>
-    <ClCompile Include="NPCManager.cpp">
-      <Filter>source</Filter>
-    </ClCompile>
-    <ClCompile Include="RecastNavMesh.cpp">
-      <Filter>source</Filter>
-    </ClCompile>
     <ClCompile Include="..\..\..\..\Desktop\recastnavigation-main\DebugUtils\Source\RecastDump.cpp">
       <Filter>source</Filter>
     </ClCompile>
@@ -62,15 +38,6 @@
       <Filter>source</Filter>
     </ClCompile>
     <ClCompile Include="..\..\..\..\Desktop\recastnavigation-main\DebugUtils\Source\RecastDebugDraw.cpp">
-      <Filter>source</Filter>
-    </ClCompile>
-    <ClCompile Include="DetourNavMesh.cpp">
-      <Filter>source</Filter>
-    </ClCompile>
-    <ClCompile Include="GLRecastDebugDraw.cpp">
-      <Filter>source</Filter>
-    </ClCompile>
-    <ClCompile Include="NavigationSystem.cpp">
       <Filter>source</Filter>
     </ClCompile>
   </ItemGroup>
