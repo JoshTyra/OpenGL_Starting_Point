@@ -1,0 +1,129 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="Skybox.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="PhysicsWorld.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="OpenGL_Starting_Point.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="NPC.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\..\Desktop\imgui-master\imgui_widgets.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\..\Desktop\imgui-master\imgui_tables.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\..\Desktop\imgui-master\backends\imgui_impl_opengl3.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\..\Desktop\imgui-master\backends\imgui_impl_glfw.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\..\Desktop\imgui-master\imgui_draw.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\..\Desktop\imgui-master\imgui.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\GameEngine\GameEngine\io\FileSystemUtils.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\FrustumDebug\FrustumDebug\Camera.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="BehaviorTrees.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="AnimatedModel.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="PhysicsDebugDrawer.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="NPCManager.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="RecastNavMesh.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\..\Desktop\recastnavigation-main\DebugUtils\Source\RecastDump.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\..\Desktop\recastnavigation-main\DebugUtils\Source\DebugDraw.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\..\Desktop\recastnavigation-main\DebugUtils\Source\DetourDebugDraw.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\..\..\Desktop\recastnavigation-main\DebugUtils\Source\RecastDebugDraw.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="DetourNavMesh.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="GLRecastDebugDraw.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+    <ClCompile Include="NavigationSystem.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="Skybox.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="PhysicsWorld.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="NPC.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="FrameTimeTracker.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\GameEngine\GameEngine\FileSystemUtils.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\FrustumDebug\FrustumDebug\Camera.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="BehaviorTrees.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="AnimatedModel.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="PhysicsDebugDrawer.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="NPCManager.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="RecastNavMesh.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="DetourNavMesh.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="GLRecastDebugDraw.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="NavigationSystem.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="source">
+      <UniqueIdentifier>{88514573-538a-47fc-bf9c-93bbb7fabbbe}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="headers">
+      <UniqueIdentifier>{381e28ee-63a8-4dbd-961e-8e6b5dd8c908}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>
