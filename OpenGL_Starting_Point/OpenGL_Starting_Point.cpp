@@ -547,10 +547,10 @@ int main() {
     glEnable(GL_DEPTH_TEST);
 
     // Load the model
-    Model model = loadModel(FileSystemUtils::getAssetFilePath("models/nav_test_tutorial_map.obj"));
+    Model model = loadModel(FileSystemUtils::getAssetFilePath("models/coagulation.obj"));
 
     std::cout << "Creating navigation grid..." << std::endl;
-    float cellSize = 5.0f; // Adjust this value based on your needs
+    float cellSize = 0.05f; 
     NavigationGrid navGrid(model, cellSize);
     std::cout << "Navigation grid created." << std::endl;
 
