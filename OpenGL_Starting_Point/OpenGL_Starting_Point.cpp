@@ -488,20 +488,39 @@ void NavigationGrid::render(GLuint shaderProgram) const {
 }
 
 struct Cube {
-    glm::vec3 position;
-    glm::vec3 size;
-    glm::vec3 color;
+    glm::vec3 position;  // The position of the cube in the 3D world
+    glm::vec3 size;      // The size of the cube
+    glm::vec3 color;     // The color of the cube
+    float yaw;           // Yaw angle for rotation around the Y-axis (horizontal rotation)
+    float pitch;         // Pitch angle for rotation around the X-axis (vertical rotation)
 
     Cube(const glm::vec3& pos, const glm::vec3& sz, const glm::vec3& col)
-        : position(pos), size(sz), color(col) {}
+        : position(pos), size(sz), color(col), yaw(0.0f), pitch(0.0f) {}
+
+    void updateRotation(const glm::vec3& surfaceNormal) {
+        // Calculate pitch (rotation around X-axis)
+        // Pitch is based on the angle between the surface normal and the Z-axis (up vector in world space)
+        float dotProductZ = glm::dot(surfaceNormal, glm::vec3(0.0f, 0.0f, 1.0f));
+        pitch = acos(dotProductZ);
+
+        // Calculate yaw (rotation around Y-axis)
+        // Yaw is based on the angle between the surface normal and the Y-axis (forward vector in world space)
+        float dotProductY = glm::dot(surfaceNormal, glm::vec3(0.0f, 1.0f, 0.0f));
+        yaw = atan2(surfaceNormal.y, surfaceNormal.x);
+    }
 
     void Draw(GLuint shaderProgram) const {
+        // Build the transformation matrix
+        // Apply translation to position the cube, then apply rotations (pitch and yaw)
         glm::mat4 model = glm::translate(glm::mat4(1.0f), position);
-        model = glm::scale(model, size);
+        model = glm::rotate(model, pitch, glm::vec3(1.0f, 0.0f, 0.0f));  // Rotate around the X-axis (pitch)
+        model = glm::rotate(model, yaw, glm::vec3(0.0f, 1.0f, 0.0f));    // Rotate around the Y-axis (yaw)
+        model = glm::scale(model, size);  // Scale the cube to its specified size
+
         GLuint modelLoc = glGetUniformLocation(shaderProgram, "model");
         glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
 
-        // Simple cube vertices
+        // Simple cube vertex data
         float vertices[] = {
             // positions          // colors
             -0.5f, -0.5f, -0.5f,  color.r, color.g, color.b,
@@ -745,9 +764,14 @@ int main() {
 
         // Simple navigation logic for testing
         if (frameCount % 5 == 0) { // Move every second (assuming 60 FPS)
-            glm::vec3 cellCenter = navGrid.getGridCellCenter(targetX, targetZ);
-            aiCube.position.x = cellCenter.x;
-            aiCube.position.z = cellCenter.z;
+            glm::vec3 currentPosition = aiCube.position;
+            glm::vec3 targetPosition = navGrid.getGridCellCenter(targetX, targetZ);
+
+            glm::vec3 direction = glm::normalize(targetPosition - currentPosition);
+            aiCube.updateRotation(direction);  // Update the rotation based on the direction
+
+            aiCube.position.x = targetPosition.x;
+            aiCube.position.z = targetPosition.z;
 
             // Apply the height offset here
             float heightOffset = 0.25f; // Adjust this value as necessary
