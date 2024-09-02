@@ -7,12 +7,19 @@
 #include "Camera.h"
 #include "FileSystemUtils.h"
 #include <chrono>
-#include <numeric>
 
 // Asset Importer
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
+
+// Path-finding
+#include <numeric>
+#include <queue>
+#include <unordered_map>
+#include <functional>
+#include <cstdlib>
+#include <ctime>   // for time()
 
 // Constants and global variables
 const int WIDTH = 2560;
@@ -26,6 +33,15 @@ double previousTime = 0.0;
 int frameCount = 0;
 
 Camera camera(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), -180.0f, 0.0f, 12.0f, 0.1f, 45.0f);
+
+// Booleans for debug data rendering
+bool renderGridLines = false;
+bool renderCellCenters = false;
+bool renderRaycasts = false;
+float debugLineSize = 1.0f;  // Default line size
+bool prevKey1State = false;
+bool prevKey2State = false;
+bool prevKey3State = false;
 
 // Vertex Shader source code
 const char* vertexShaderSource = R"(
@@ -67,6 +83,32 @@ void processInput(GLFWwindow* window) {
         camera.processKeyboardInput(GLFW_KEY_A, deltaTime);
     if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
         camera.processKeyboardInput(GLFW_KEY_D, deltaTime);
+
+    // Toggle rendering options
+    bool currentKey1State = glfwGetKey(window, GLFW_KEY_1) == GLFW_PRESS;
+    bool currentKey2State = glfwGetKey(window, GLFW_KEY_2) == GLFW_PRESS;
+    bool currentKey3State = glfwGetKey(window, GLFW_KEY_3) == GLFW_PRESS;
+
+    if (currentKey1State && !prevKey1State) {
+        renderGridLines = !renderGridLines;
+    }
+    if (currentKey2State && !prevKey2State) {
+        renderCellCenters = !renderCellCenters;
+    }
+    if (currentKey3State && !prevKey3State) {
+        renderRaycasts = !renderRaycasts;
+    }
+
+    // Update the previous key states
+    prevKey1State = currentKey1State;
+    prevKey2State = currentKey2State;
+    prevKey3State = currentKey3State;
+
+    // Adjust debug line size
+    if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS)
+        debugLineSize += 0.1f;
+    if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS)
+        debugLineSize = std::max(0.1f, debugLineSize - 0.1f); // Ensure line size doesn't go below 0.1
 }
 
 void mouseCallback(GLFWwindow* window, double xpos, double ypos) {
@@ -176,13 +218,8 @@ public:
         glm::vec3 color;
     };
 
-    int getGridWidth() const {
-        return m_gridWidth;
-    }
-
-    int getGridDepth() const {
-        return m_gridDepth;
-    }
+    int getGridWidth() const { return m_gridWidth; }
+    int getGridDepth() const { return m_gridDepth; }
 
     glm::vec3 getGridCellCenter(int x, int z) const {
         int index = z * m_gridWidth + x;
@@ -190,12 +227,18 @@ public:
     }
 
     float getGridCellHeight(int x, int z) const {
-        int index = z * m_gridWidth + x;
-        return m_grid[index].center.y;
+        return getGridCellCenter(x, z).y;
     }
+
+    float getCellSize() const { return m_cellSize; }
+
+    glm::ivec2 getGridPosition(float x, float z) const;
 
     void createGrid(const Model& model);
     void render(GLuint shaderProgram) const;
+    bool isWalkable(int x, int z) const;
+    void forceWalkable(int x, int z);
+    std::vector<glm::ivec2> getWalkableCells() const;
 
 private:
     const Model* m_model;
@@ -203,52 +246,16 @@ private:
     float m_cellSize;
     int m_gridWidth;
     int m_gridDepth;
+    glm::vec3 m_minBounds;
+    glm::vec3 m_maxBounds;
 
     void determineWalkableAreas();
     bool isPointAboveSurface(const glm::vec3& point) const;
 
-    // Add this new private method
     bool rayTriangleIntersect(
         const glm::vec3& rayOrigin, const glm::vec3& rayVector,
         const glm::vec3& v0, const glm::vec3& v1, const glm::vec3& v2,
-        float& t, float& u, float& v) const
-    {
-        const float EPSILON = 0.0000001f;
-        glm::vec3 edge1, edge2, h, s, q;
-        float a, f;
-
-        edge1 = v1 - v0;
-        edge2 = v2 - v0;
-        h = glm::cross(rayVector, edge2);
-        a = glm::dot(edge1, h);
-
-        if (a > -EPSILON && a < EPSILON) {
-            return false;  // Ray is parallel to the triangle
-        }
-
-        f = 1.0f / a;
-        s = rayOrigin - v0;
-        u = f * glm::dot(s, h);
-
-        if (u < 0.0f || u > 1.0f) {
-            return false;
-        }
-
-        q = glm::cross(s, edge1);
-        v = f * glm::dot(rayVector, q);
-
-        if (v < 0.0f || u + v > 1.0f) {
-            return false;
-        }
-
-        t = f * glm::dot(edge2, q);
-
-        if (t > EPSILON) {
-            return true;
-        }
-
-        return false;
-    }
+        float& t, float& u, float& v) const;
 };
 
 // Define the colors outside the class
@@ -259,35 +266,77 @@ const glm::vec3 NavigationGrid::COLOR_NOHIT = glm::vec3(1.0f, 0.5f, 0.0f);
 const glm::vec3 NavigationGrid::COLOR_GRID = glm::vec3(0.0f, 1.0f, 1.0f);
 const glm::vec3 NavigationGrid::COLOR_RAYCAST = glm::vec3(1.0f, 0.0f, 1.0f);
 
+bool NavigationGrid::rayTriangleIntersect(
+    const glm::vec3& rayOrigin, const glm::vec3& rayVector,
+    const glm::vec3& v0, const glm::vec3& v1, const glm::vec3& v2,
+    float& t, float& u, float& v) const
+{
+    const float EPSILON = 0.0000001f;
+    glm::vec3 edge1, edge2, h, s, q;
+    float a, f;
+
+    edge1 = v1 - v0;
+    edge2 = v2 - v0;
+    h = glm::cross(rayVector, edge2);
+    a = glm::dot(edge1, h);
+
+    if (a > -EPSILON && a < EPSILON) {
+        return false;  // Ray is parallel to the triangle
+    }
+
+    f = 1.0f / a;
+    s = rayOrigin - v0;
+    u = f * glm::dot(s, h);
+
+    if (u < 0.0f || u > 1.0f) {
+        return false;
+    }
+
+    q = glm::cross(s, edge1);
+    v = f * glm::dot(rayVector, q);
+
+    if (v < 0.0f || u + v > 1.0f) {
+        return false;
+    }
+
+    t = f * glm::dot(edge2, q);
+
+    if (t > EPSILON) {
+        return true;
+    }
+
+    return false;
+}
+
 void NavigationGrid::createGrid(const Model& model) {
-    // Find the bounds of the mesh
-    glm::vec3 minBound = model.aabbMin;
-    glm::vec3 maxBound = model.aabbMax;
+    // Set class member variables for bounds
+    m_minBounds = model.aabbMin;
+    m_maxBounds = model.aabbMax;
 
     // Calculate grid dimensions
-    m_gridWidth = static_cast<int>((maxBound.x - minBound.x) / m_cellSize);
-    m_gridDepth = static_cast<int>((maxBound.z - minBound.z) / m_cellSize);
+    m_gridWidth = static_cast<int>((m_maxBounds.x - m_minBounds.x) / m_cellSize);
+    m_gridDepth = static_cast<int>((m_maxBounds.z - m_minBounds.z) / m_cellSize);
 
-    // Adjust maxBound to fit the grid exactly
-    maxBound.x = minBound.x + m_gridWidth * m_cellSize;
-    maxBound.z = minBound.z + m_gridDepth * m_cellSize;
+    // Adjust m_maxBounds to fit the grid exactly
+    m_maxBounds.x = m_minBounds.x + m_gridWidth * m_cellSize;
+    m_maxBounds.z = m_minBounds.z + m_gridDepth * m_cellSize;
 
     std::cout << "Grid dimensions: " << m_gridWidth << " x " << m_gridDepth << std::endl;
-    std::cout << "Mesh bounds: Min(" << minBound.x << ", " << minBound.y << ", " << minBound.z
-        << ") Max(" << maxBound.x << ", " << maxBound.y << ", " << maxBound.z << ")" << std::endl;
+    std::cout << "Mesh bounds: Min(" << m_minBounds.x << ", " << m_minBounds.y << ", " << m_minBounds.z
+        << ") Max(" << m_maxBounds.x << ", " << m_maxBounds.y << ", " << m_maxBounds.z << ")" << std::endl;
 
     // Initialize grid
     m_grid.resize(m_gridWidth * m_gridDepth);
 
     // Fill grid
-    float initialY = minBound.y + 0.1f; // Start slightly above the lowest point
+    float initialY = m_minBounds.y + 0.1f; // Start slightly above the lowest point
     for (int x = 0; x < m_gridWidth; ++x) {
         for (int z = 0; z < m_gridDepth; ++z) {
             int index = z * m_gridWidth + x;
             m_grid[index].center = glm::vec3(
-                minBound.x + (x + 0.5f) * m_cellSize,
+                m_minBounds.x + (x + 0.5f) * m_cellSize,
                 initialY,
-                minBound.z + (z + 0.5f) * m_cellSize
+                m_minBounds.z + (z + 0.5f) * m_cellSize
             );
             m_grid[index].walkable = false;  // Assume not walkable by default
         }
@@ -350,11 +399,19 @@ void NavigationGrid::determineWalkableAreas() {
 
             if (hit) {
                 hitCount++;
-                // Existing logic to handle walkability and color assignment
+                // Check the slope of the hit surface and log if it's marked as non-walkable
+                if (slopes.size() > 0 && *std::max_element(slopes.begin(), slopes.end()) > maxWalkableSlope) {
+                    std::cout << "Cell at (" << x << ", " << z << ") is too steep to walk on." << std::endl;
+                }
+                else {
+                    m_grid[index].walkable = true;
+                    m_grid[index].color = COLOR_WALKABLE;
+                }
             }
             else {
                 m_grid[index].walkable = false;
                 m_grid[index].color = COLOR_NOHIT;
+                std::cout << "Raycast didn't hit anything at cell (" << x << ", " << z << ")." << std::endl;
             }
         }
     }
@@ -391,6 +448,36 @@ bool NavigationGrid::isPointAboveSurface(const glm::vec3& point) const {
     return true;
 }
 
+void NavigationGrid::forceWalkable(int x, int z) {
+    int index = z * m_gridWidth + x;
+    m_grid[index].walkable = true;
+    m_grid[index].color = COLOR_WALKABLE;  // Update color for visual debugging
+}
+
+
+bool NavigationGrid::isWalkable(int x, int z) const {
+    int index = z * m_gridWidth + x;
+    return m_grid[index].walkable;
+}
+
+glm::ivec2 NavigationGrid::getGridPosition(float x, float z) const {
+    int gridX = static_cast<int>((x - m_minBounds.x) / m_cellSize);
+    int gridZ = static_cast<int>((z - m_minBounds.z) / m_cellSize);
+    return glm::ivec2(gridX, gridZ);
+}
+
+std::vector<glm::ivec2> NavigationGrid::getWalkableCells() const {
+    std::vector<glm::ivec2> walkableCells;
+    for (int x = 0; x < m_gridWidth; ++x) {
+        for (int z = 0; z < m_gridDepth; ++z) {
+            if (isWalkable(x, z)) {
+                walkableCells.push_back(glm::ivec2(x, z));
+            }
+        }
+    }
+    return walkableCells;
+}
+
 void NavigationGrid::render(GLuint shaderProgram) const {
     // Create and bind a VAO
     GLuint VAO, VBO;
@@ -409,53 +496,46 @@ void NavigationGrid::render(GLuint shaderProgram) const {
         };
 
     // Grid lines
-    for (int x = 0; x <= m_gridWidth; ++x) {
-        const auto& startCell = safeGetCell(x, 0);
-        const auto& endCell = safeGetCell(x, m_gridDepth - 1);
-        vertexData.insert(vertexData.end(), { startCell.center.x, m_model->aabbMin.y, startCell.center.z });
-        vertexData.insert(vertexData.end(), glm::value_ptr(COLOR_GRID), glm::value_ptr(COLOR_GRID) + 3);
-        vertexData.insert(vertexData.end(), { endCell.center.x, m_model->aabbMin.y, endCell.center.z });
-        vertexData.insert(vertexData.end(), glm::value_ptr(COLOR_GRID), glm::value_ptr(COLOR_GRID) + 3);
-    }
-    for (int z = 0; z <= m_gridDepth; ++z) {
-        const auto& startCell = safeGetCell(0, z);
-        const auto& endCell = safeGetCell(m_gridWidth - 1, z);
-        vertexData.insert(vertexData.end(), { startCell.center.x, m_model->aabbMin.y, startCell.center.z });
-        vertexData.insert(vertexData.end(), glm::value_ptr(COLOR_GRID), glm::value_ptr(COLOR_GRID) + 3);
-        vertexData.insert(vertexData.end(), { endCell.center.x, m_model->aabbMin.y, endCell.center.z });
-        vertexData.insert(vertexData.end(), glm::value_ptr(COLOR_GRID), glm::value_ptr(COLOR_GRID) + 3);
+    if (renderGridLines) {
+        for (int x = 0; x <= m_gridWidth; ++x) {
+            const auto& startCell = safeGetCell(x, 0);
+            const auto& endCell = safeGetCell(x, m_gridDepth - 1);
+            vertexData.insert(vertexData.end(), { startCell.center.x, m_model->aabbMin.y, startCell.center.z });
+            vertexData.insert(vertexData.end(), glm::value_ptr(COLOR_GRID), glm::value_ptr(COLOR_GRID) + 3);
+            vertexData.insert(vertexData.end(), { endCell.center.x, m_model->aabbMin.y, endCell.center.z });
+            vertexData.insert(vertexData.end(), glm::value_ptr(COLOR_GRID), glm::value_ptr(COLOR_GRID) + 3);
+        }
+        for (int z = 0; z <= m_gridDepth; ++z) {
+            const auto& startCell = safeGetCell(0, z);
+            const auto& endCell = safeGetCell(m_gridWidth - 1, z);
+            vertexData.insert(vertexData.end(), { startCell.center.x, m_model->aabbMin.y, startCell.center.z });
+            vertexData.insert(vertexData.end(), glm::value_ptr(COLOR_GRID), glm::value_ptr(COLOR_GRID) + 3);
+            vertexData.insert(vertexData.end(), { endCell.center.x, m_model->aabbMin.y, endCell.center.z });
+            vertexData.insert(vertexData.end(), glm::value_ptr(COLOR_GRID), glm::value_ptr(COLOR_GRID) + 3);
+        }
     }
 
     // Cell centers
-    for (int z = 0; z < m_gridDepth; ++z) {
-        for (int x = 0; x < m_gridWidth; ++x) {
-            const auto& cell = safeGetCell(x, z);
-            vertexData.insert(vertexData.end(), { cell.center.x, cell.center.y, cell.center.z });
-            vertexData.insert(vertexData.end(), glm::value_ptr(cell.color), glm::value_ptr(cell.color) + 3);
+    if (renderCellCenters) {
+        for (int z = 0; z < m_gridDepth; ++z) {
+            for (int x = 0; x < m_gridWidth; ++x) {
+                const auto& cell = safeGetCell(x, z);
+                vertexData.insert(vertexData.end(), { cell.center.x, cell.center.y, cell.center.z });
+                vertexData.insert(vertexData.end(), glm::value_ptr(cell.color), glm::value_ptr(cell.color) + 3);
+            }
         }
     }
 
     // Debug raycasts
-    for (int z = 0; z < m_gridDepth; ++z) {
-        for (int x = 0; x < m_gridWidth; ++x) {
-            const auto& cell = safeGetCell(x, z);
-            vertexData.insert(vertexData.end(), { cell.center.x, m_model->aabbMax.y + 1.0f, cell.center.z });
-            vertexData.insert(vertexData.end(), glm::value_ptr(COLOR_RAYCAST), glm::value_ptr(COLOR_RAYCAST) + 3);
-            vertexData.insert(vertexData.end(), { cell.center.x, cell.center.y, cell.center.z });
-            vertexData.insert(vertexData.end(), glm::value_ptr(COLOR_RAYCAST), glm::value_ptr(COLOR_RAYCAST) + 3);
-        }
-    }
-
-    // Additional debug rendering for grid cell centers
-    for (int z = 0; z < m_gridDepth; ++z) {
-        for (int x = 0; x < m_gridWidth; ++x) {
-            const auto& cell = m_grid[z * m_gridWidth + x];
-            glm::vec3 debugColor(1.0f, 0.0f, 0.0f); // Red color for debug points
-
-            glBegin(GL_POINTS); // Draw a point at the grid cell center
-            glColor3f(debugColor.r, debugColor.g, debugColor.b);
-            glVertex3f(cell.center.x, cell.center.y, cell.center.z);
-            glEnd();
+    if (renderRaycasts) {
+        for (int z = 0; z < m_gridDepth; ++z) {
+            for (int x = 0; x < m_gridWidth; ++x) {
+                const auto& cell = safeGetCell(x, z);
+                vertexData.insert(vertexData.end(), { cell.center.x, m_model->aabbMax.y + 1.0f, cell.center.z });
+                vertexData.insert(vertexData.end(), glm::value_ptr(COLOR_RAYCAST), glm::value_ptr(COLOR_RAYCAST) + 3);
+                vertexData.insert(vertexData.end(), { cell.center.x, cell.center.y, cell.center.z });
+                vertexData.insert(vertexData.end(), glm::value_ptr(COLOR_RAYCAST), glm::value_ptr(COLOR_RAYCAST) + 3);
+            }
         }
     }
 
@@ -468,18 +548,27 @@ void NavigationGrid::render(GLuint shaderProgram) const {
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
     glEnableVertexAttribArray(1);
 
+    // Set line width
+    glLineWidth(debugLineSize);
+
     // Use the shader program
     glUseProgram(shaderProgram);
 
     // Draw grid lines
-    glDrawArrays(GL_LINES, 0, (m_gridWidth + m_gridDepth + 2) * 2);
+    if (renderGridLines) {
+        glDrawArrays(GL_LINES, 0, (m_gridWidth + m_gridDepth + 2) * 2);
+    }
 
     // Draw cell centers
-    glPointSize(5.0f);
-    glDrawArrays(GL_POINTS, (m_gridWidth + m_gridDepth + 2) * 2, m_gridWidth * m_gridDepth);
+    if (renderCellCenters) {
+        glPointSize(2.8f);
+        glDrawArrays(GL_POINTS, (m_gridWidth + m_gridDepth + 2) * 2, m_gridWidth * m_gridDepth);
+    }
 
     // Draw debug raycasts
-    glDrawArrays(GL_LINES, (m_gridWidth + m_gridDepth + 2) * 2 + m_gridWidth * m_gridDepth, m_gridWidth * m_gridDepth * 2);
+    if (renderRaycasts) {
+        glDrawArrays(GL_LINES, (m_gridWidth + m_gridDepth + 2) * 2 + m_gridWidth * m_gridDepth, m_gridWidth * m_gridDepth * 2);
+    }
 
     // Clean up
     glBindVertexArray(0);
@@ -574,6 +663,132 @@ struct Cube {
     }
 };
 
+// Node structure for A* algorithm
+struct Node {
+    int x, z;
+    float gCost;  // Cost from start to current node
+    float hCost;  // Heuristic cost (estimated cost to target)
+    float fCost;  // Total cost (gCost + hCost)
+    Node* parent; // Pointer to the parent node
+
+    Node() : x(0), z(0), gCost(0.0f), hCost(0.0f), fCost(0.0f), parent(nullptr) {} // Default constructor
+
+    Node(int x, int z, float gCost, float hCost, Node* parent = nullptr)
+        : x(x), z(z), gCost(gCost), hCost(hCost), fCost(gCost + hCost), parent(parent) {}
+
+    bool operator>(const Node& other) const {
+        return fCost > other.fCost;
+    }
+};
+
+std::vector<glm::vec3> findPath(const glm::vec3& startPos, const glm::vec3& targetPos, NavigationGrid& grid) {
+    // A* setup
+    std::priority_queue<Node, std::vector<Node>, std::greater<Node>> openSet;
+    std::unordered_map<int, Node> allNodes;
+    int gridWidth = grid.getGridWidth();
+    int gridDepth = grid.getGridDepth();
+
+    auto heuristic = [](const glm::vec3& a, const glm::vec3& b) -> float {
+        return glm::length(a - b);
+        };
+
+    auto getIndex = [gridWidth](int x, int z) -> int {
+        return z * gridWidth + x;
+        };
+
+    // Initialize the start node
+    int startX = static_cast<int>((startPos.x - grid.getGridCellCenter(0, 0).x) / grid.getCellSize());
+    int startZ = static_cast<int>((startPos.z - grid.getGridCellCenter(0, 0).z) / grid.getCellSize());
+    int targetX = static_cast<int>((targetPos.x - grid.getGridCellCenter(0, 0).x) / grid.getCellSize());
+    int targetZ = static_cast<int>((targetPos.z - grid.getGridCellCenter(0, 0).z) / grid.getCellSize());
+
+    Node startNode(startX, startZ, 0.0f, heuristic(startPos, targetPos));
+    openSet.push(startNode);
+    allNodes[getIndex(startX, startZ)] = startNode;
+
+    // Directions for neighbor cells (up, down, left, right)
+    std::vector<std::pair<int, int>> directions = {
+        { 0, 1 }, { 1, 0 }, { 0, -1 }, { -1, 0 }
+    };
+
+    while (!openSet.empty()) {
+        Node current = openSet.top();
+        openSet.pop();
+
+        // Check if we've reached the target
+        if (current.x == targetX && current.z == targetZ) {
+            // Reconstruct the path
+            std::vector<glm::vec3> path;
+            Node* node = &allNodes[getIndex(current.x, current.z)];
+            while (node != nullptr) {
+                path.push_back(grid.getGridCellCenter(node->x, node->z));
+                node = node->parent;
+            }
+            std::reverse(path.begin(), path.end());
+            return path;
+        }
+
+        // Explore neighbors
+        for (const auto& direction : directions) {
+            int neighborX = current.x + direction.first;
+            int neighborZ = current.z + direction.second;
+
+            // Check bounds and walkability
+            if (neighborX < 0 || neighborX >= gridWidth || neighborZ < 0 || neighborZ >= gridDepth ||
+                !grid.isWalkable(neighborX, neighborZ)) {
+                continue;
+            }
+
+            float newGCost = current.gCost + 1.0f;  // Assume all movements cost 1
+            float hCost = heuristic(grid.getGridCellCenter(neighborX, neighborZ), targetPos);
+            int neighborIndex = getIndex(neighborX, neighborZ);
+
+            if (allNodes.find(neighborIndex) == allNodes.end() || newGCost < allNodes[neighborIndex].gCost) {
+                Node neighborNode(neighborX, neighborZ, newGCost, hCost, &allNodes[getIndex(current.x, current.z)]);
+                openSet.push(neighborNode);
+                allNodes[neighborIndex] = neighborNode;
+            }
+        }
+    }
+
+    // If we get here, there's no valid path
+    return {};
+}
+
+glm::vec3 findFirstWalkableCell(const NavigationGrid& navGrid) {
+    for (int z = 0; z < navGrid.getGridDepth(); ++z) {
+        for (int x = 0; x < navGrid.getGridWidth(); ++x) {
+            if (navGrid.isWalkable(x, z)) {
+                // Return the center of the first walkable cell found
+                return navGrid.getGridCellCenter(x, z);
+            }
+        }
+    }
+    // If no walkable cell is found, return a default value (e.g., (0, 0, 0))
+    return glm::vec3(0.0f, 0.0f, 0.0f);
+}
+
+glm::vec3 findRandomWalkableCell(const NavigationGrid& navGrid) {
+    std::vector<glm::vec3> walkableCells;
+
+    for (int z = 0; z < navGrid.getGridDepth(); ++z) {
+        for (int x = 0; x < navGrid.getGridWidth(); ++x) {
+            if (navGrid.isWalkable(x, z)) {
+                walkableCells.push_back(navGrid.getGridCellCenter(x, z));
+            }
+        }
+    }
+
+    if (!walkableCells.empty()) {
+        // Pick a random walkable cell
+        int randomIndex = rand() % walkableCells.size();
+        return walkableCells[randomIndex];
+    }
+
+    // If no walkable cell is found, return a default value (e.g., (0, 0, 0))
+    return glm::vec3(0.0f, 0.0f, 0.0f);
+}
+
 Model loadModel(const std::string& path) {
     Assimp::Importer importer;
     const aiScene* scene = importer.ReadFile(path, aiProcess_Triangulate | aiProcess_FlipUVs);
@@ -664,13 +879,23 @@ int main() {
 
     glEnable(GL_DEPTH_TEST);
 
+    // Used for random destination for ai agent
+    std::srand(static_cast<unsigned int>(std::time(nullptr)));
+
     // Load the model
     Model model = loadModel(FileSystemUtils::getAssetFilePath("models/nav_test_tutorial_map.obj"));
 
     std::cout << "Creating navigation grid..." << std::endl;
+
+    // Controls how dense the navigation grid will be
     float cellSize = 1.0f; 
     NavigationGrid navGrid(model, cellSize);
     std::cout << "Navigation grid created." << std::endl;
+
+    // Used for debug rendering of the ai agent path
+    GLuint pathVAO, pathVBO;
+    glGenVertexArrays(1, &pathVAO);
+    glGenBuffers(1, &pathVBO);
 
     // Build and compile the shader program
     // Vertex Shader
@@ -714,9 +939,53 @@ int main() {
     glDeleteShader(vertexShader);
     glDeleteShader(fragmentShader);
 
+    float movementSpeed = 3.5f; // Adjust this value to control how fast the AI cube moves
+
     // Create a test AI cube
     Cube aiCube(glm::vec3(-3.0f, 0.0f, -3.0f), glm::vec3(0.5f), glm::vec3(1.0f, 0.0f, 0.0f));
-    int targetX = 0, targetZ = 0; // Target grid coordinates
+
+    // Find the first walkable cell for the start position
+    glm::vec3 startPosition = findFirstWalkableCell(navGrid);
+    aiCube.position = startPosition;
+
+    float halfCubeHeight = aiCube.size.y / 2.0f;
+
+    std::vector<glm::vec3> path;
+
+    // Get the list of walkable cells
+    std::vector<glm::ivec2> walkableCells = navGrid.getWalkableCells();
+
+    if (!walkableCells.empty()) {
+        // Pick the first walkable cell as the start
+        glm::ivec2 startCell = walkableCells.front();
+
+        // Randomly select a target cell from the walkable cells
+        int randomIndex = std::rand() % walkableCells.size();
+        glm::ivec2 targetCell = walkableCells[randomIndex];
+
+        // Convert to world positions
+        glm::vec3 startPosition = navGrid.getGridCellCenter(startCell.x, startCell.y);
+        glm::vec3 targetPosition = navGrid.getGridCellCenter(targetCell.x, targetCell.y);
+
+        // Update AI cube position
+        aiCube.position = startPosition;
+
+        // Perform pathfinding
+        path = findPath(startPosition, targetPosition, navGrid);
+
+        if (path.empty()) {
+            std::cout << "No path found between the selected walkable cells." << std::endl;
+        }
+        else {
+            std::cout << "Path found from (" << startCell.x << ", " << startCell.y << ") to ("
+                << targetCell.x << ", " << targetCell.y << ")" << std::endl;
+        }
+    }
+    else {
+        std::cout << "No walkable cells found in the grid." << std::endl;
+    }
+
+    int currentPathIndex = 0;
 
     // Render loop
     while (!glfwWindowShouldClose(window)) {
@@ -762,25 +1031,36 @@ int main() {
         // Set up the grid model matrix
         glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(modelMatrix));
 
-        // Simple navigation logic for testing
-        if (frameCount % 5 == 0) { // Move every second (assuming 60 FPS)
-            glm::vec3 currentPosition = aiCube.position;
-            glm::vec3 targetPosition = navGrid.getGridCellCenter(targetX, targetZ);
+        if (!path.empty() && currentPathIndex < path.size()) {
+            glm::ivec2 currentCell = navGrid.getGridPosition(aiCube.position.x, aiCube.position.z);
+            glm::vec3 gridCellCenter = navGrid.getGridCellCenter(currentCell.x, currentCell.y);
 
-            glm::vec3 direction = glm::normalize(targetPosition - currentPosition);
-            aiCube.updateRotation(direction);  // Update the rotation based on the direction
+            glm::vec3 targetPoint = path[currentPathIndex];
 
-            aiCube.position.x = targetPosition.x;
-            aiCube.position.z = targetPosition.z;
+            // Adjust the targetPoint to keep the cube above the ground
+            targetPoint.y = gridCellCenter.y + halfCubeHeight;
 
-            // Apply the height offset here
-            float heightOffset = 0.25f; // Adjust this value as necessary
-            aiCube.position.y = navGrid.getGridCellHeight(targetX, targetZ) + heightOffset;
-
-            targetX = (targetX + 1) % navGrid.getGridWidth();
-            if (targetX == 0) {
-                targetZ = (targetZ + 1) % navGrid.getGridDepth();
+            if (glm::length(aiCube.position - targetPoint) < 0.1f) {
+                currentPathIndex++;
             }
+            else {
+                glm::vec3 direction = glm::normalize(targetPoint - aiCube.position);
+                aiCube.updateRotation(direction);
+                aiCube.position += direction * movementSpeed * deltaTime;
+            }
+
+            // Update path data in the VBO
+            glBindVertexArray(pathVAO);
+            glBindBuffer(GL_ARRAY_BUFFER, pathVBO);
+            glBufferData(GL_ARRAY_BUFFER, path.size() * sizeof(glm::vec3), path.data(), GL_STATIC_DRAW);
+
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+            glEnableVertexAttribArray(0);
+
+            // Render the path
+            glBindVertexArray(pathVAO);
+            glDrawArrays(GL_LINE_STRIP, 0, path.size());
+            glBindVertexArray(0);
         }
 
         // Render the navigation grid
@@ -796,6 +1076,8 @@ int main() {
 
     // Clean up
     glDeleteProgram(shaderProgram);
+    glDeleteVertexArrays(1, &pathVAO);
+    glDeleteBuffers(1, &pathVBO);
 
     glfwTerminate();
     return 0;
