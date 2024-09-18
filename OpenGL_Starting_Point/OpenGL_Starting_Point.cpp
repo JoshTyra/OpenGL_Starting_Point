@@ -516,8 +516,7 @@ int main() {
 
         processInput(window);
 
-        if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
-        {
+        if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
             glfwTerminate();
             return 0;
         }
@@ -544,6 +543,9 @@ int main() {
             mesh.Draw(shaderProgram);
         }
 
+        // Set wireframe mode for navmesh
+        glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+
         // Render the navmesh
         glUseProgram(navmeshShaderProgram);
         GLuint navModelLoc = glGetUniformLocation(navmeshShaderProgram, "model");
@@ -559,6 +561,9 @@ int main() {
         glBindVertexArray(navMeshRenderData.VAO);
         glDrawArrays(GL_TRIANGLES, 0, navMeshRenderData.vertexCount);
         glBindVertexArray(0);
+
+        // Reset to fill mode after rendering navmesh
+        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 
         // Swap buffers and poll IO events
         glfwSwapBuffers(window);
