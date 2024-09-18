@@ -5,11 +5,17 @@
 #include <iostream>
 #include "Camera.h"
 #include "FileSystemUtils.h"
+#include <fstream>
 
 // Asset Importer
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
+
+// RecastDetour 
+#include "DetourNavMesh.h"
+#include "DetourNavMeshQuery.h"
+#include <cstdio>
 
 // Constants and global variables
 const int WIDTH = 2560;
@@ -24,51 +30,77 @@ int frameCount = 0;
 
 Camera camera(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), -180.0f, 0.0f, 6.0f, 0.1f, 45.0f);
 
-// Vertex Shader source code
 const char* vertexShaderSource = R"(
-#version 330 core
-layout (location = 0) in vec3 aPos;
-layout (location = 1) in vec3 aNormal;
-layout (location = 2) in vec2 aTexCoords;
+    #version 330 core
+    layout (location = 0) in vec3 aPos;
 
-out vec3 FragPos;
-out vec3 Normal;
-out vec2 TexCoords;
+    uniform mat4 model;
+    uniform mat4 view;
+    uniform mat4 projection;
 
-uniform mat4 model;
-uniform mat4 view;
-uniform mat4 projection;
+    void main()
+    {
+        gl_Position = projection * view * model * vec4(aPos, 1.0);
+    }
+    )";
 
-void main()
-{
-    FragPos = vec3(model * vec4(aPos, 1.0));
-    Normal = mat3(transpose(inverse(model))) * aNormal;  
-    TexCoords = aTexCoords;
-    
-    gl_Position = projection * view * vec4(FragPos, 1.0);
-}
-)";
-
-// Fragment Shader source code
 const char* fragmentShaderSource = R"(
-#version 330 core
-out vec4 FragColor;
+    #version 330 core
+    out vec4 FragColor;
 
-in vec3 FragPos;
-in vec3 Normal;
-in vec2 TexCoords;
+    uniform vec4 color;
 
-void main()
-{
-    vec3 norm = normalize(Normal);
-    vec3 lightDir = normalize(vec3(1.0, 1.0, 1.0));  // Directional light coming from top-right
-    float diff = max(dot(norm, lightDir), 0.0);
-    vec3 diffuse = diff * vec3(1.0, 1.0, 1.0);  // White light
-    vec3 ambient = 0.1 * vec3(1.0, 1.0, 1.0);  // Ambient light
-    
-    FragColor = vec4(ambient + diffuse, 1.0);
+    void main()
+    {
+        FragColor = color;
+    }
+    )";
+
+// Navmesh vertex shader
+const char* navmeshVertexShaderSource = R"(
+    // navmesh_vertex_shader.glsl
+    #version 330 core
+    layout (location = 0) in vec3 aPos;
+
+    uniform mat4 model;
+    uniform mat4 view;
+    uniform mat4 projection;
+
+    void main() {
+        vec4 worldPos = model * vec4(aPos, 1.0);
+        gl_Position = projection * view * worldPos;
+    }
+    )";
+
+// Navmesh fragment shader
+const char* navmeshFragmentShaderSource = R"(
+    #version 330 core
+    out vec4 FragColor;
+
+    uniform vec4 color;
+
+    void main() {
+        FragColor = color;
+    }
+    )";
+
+// Function to compile shader from source
+GLuint compileShader(GLenum type, const char* source) {
+    GLuint shader = glCreateShader(type);
+    glShaderSource(shader, 1, &source, NULL);
+    glCompileShader(shader);
+
+    // Check for shader compile errors
+    GLint success;
+    char infoLog[512];
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
+    if (!success) {
+        glGetShaderInfoLog(shader, 512, NULL, infoLog);
+        std::cerr << "ERROR::SHADER::COMPILATION_FAILED\n" << infoLog << std::endl;
+    }
+
+    return shader;
 }
-)";
 
 void processInput(GLFWwindow* window) {
     if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
@@ -106,8 +138,6 @@ void scrollCallback(GLFWwindow* window, double xoffset, double yoffset) {
 
 struct Vertex {
     glm::vec3 Position;
-    glm::vec3 Normal;
-    glm::vec2 TexCoords;
 };
 
 struct Mesh {
@@ -116,11 +146,13 @@ struct Mesh {
     mutable unsigned int VAO;  // Mark as mutable to allow modification in const functions
 
     Mesh(std::vector<Vertex> vertices, std::vector<unsigned int> indices)
-        : vertices(vertices), indices(indices) {
+        : vertices(vertices), indices(indices)
+    {
         setupMesh();
     }
 
-    void setupMesh() const {  // Mark as const
+    void setupMesh() const
+    {
         glGenVertexArrays(1, &VAO);
         glBindVertexArray(VAO);
 
@@ -137,19 +169,19 @@ struct Mesh {
         // Vertex Positions
         glEnableVertexAttribArray(0);
         glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0);
-        // Vertex Normals
-        glEnableVertexAttribArray(1);
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, Normal));
-        // Vertex Texture Coords
-        glEnableVertexAttribArray(2);
-        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, TexCoords));
 
         glBindVertexArray(0);
     }
 
-    void Draw(GLuint shaderProgram) const {  // Mark as const
+    void Draw(GLuint shaderProgram) const
+    {
         glUseProgram(shaderProgram);
         glBindVertexArray(VAO);
+
+        // Set the color uniform (e.g., white color)
+        GLuint colorLoc = glGetUniformLocation(shaderProgram, "color");
+        glUniform4f(colorLoc, 1.0f, 1.0f, 1.0f, 1.0f);
+
         glDrawElements(GL_TRIANGLES, indices.size(), GL_UNSIGNED_INT, 0);
         glBindVertexArray(0);
     }
@@ -173,15 +205,11 @@ std::vector<Mesh> loadModel(const std::string& path) {
 
         for (unsigned int j = 0; j < mesh->mNumVertices; j++) {
             Vertex vertex;
-            vertex.Position = glm::vec3(mesh->mVertices[j].x, mesh->mVertices[j].y, mesh->mVertices[j].z);
-            vertex.Normal = glm::vec3(mesh->mNormals[j].x, mesh->mNormals[j].y, mesh->mNormals[j].z);
-
-            if (mesh->mTextureCoords[0]) {
-                vertex.TexCoords = glm::vec2(mesh->mTextureCoords[0][j].x, mesh->mTextureCoords[0][j].y);
-            }
-            else {
-                vertex.TexCoords = glm::vec2(0.0f, 0.0f);
-            }
+            vertex.Position = glm::vec3(
+                mesh->mVertices[j].x,
+                mesh->mVertices[j].y,
+                mesh->mVertices[j].z
+            );
 
             vertices.push_back(vertex);
         }
@@ -197,6 +225,199 @@ std::vector<Mesh> loadModel(const std::string& path) {
     }
 
     return meshes;
+}
+
+#define NAVMESHSET_MAGIC 'MSET'
+#define NAVMESHSET_VERSION 1
+
+struct NavMeshSetHeader {
+    int magic;
+    int version;
+    int numTiles;
+    dtNavMeshParams params;
+};
+
+struct NavMeshTileHeader {
+    dtTileRef tileRef;
+    int dataSize;
+};
+
+struct NavMeshRenderData {
+    GLuint VAO;
+    GLuint VBO;
+    size_t vertexCount;
+};
+
+dtNavMesh* loadNavMeshFromFile(const char* path) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file.is_open()) {
+        printf("Failed to open file %s\n", path);
+        return nullptr;
+    }
+
+    // Read header.
+    NavMeshSetHeader header;
+    file.read(reinterpret_cast<char*>(&header), sizeof(NavMeshSetHeader));
+    if (!file || header.magic != NAVMESHSET_MAGIC) {
+        printf("Bad magic number or failed to read header in navmesh file %s\n", path);
+        return nullptr;
+    }
+    if (header.version != NAVMESHSET_VERSION) {
+        printf("Wrong version in navmesh file %s\n", path);
+        return nullptr;
+    }
+
+    dtNavMesh* mesh = dtAllocNavMesh();
+    if (!mesh) {
+        printf("Failed to allocate navmesh\n");
+        return nullptr;
+    }
+
+    dtStatus status = mesh->init(&header.params);
+    if (dtStatusFailed(status)) {
+        printf("Failed to initialize navmesh\n");
+        dtFreeNavMesh(mesh);
+        return nullptr;
+    }
+
+    // Read tiles.
+    for (int i = 0; i < header.numTiles; ++i) {
+        NavMeshTileHeader tileHeader;
+        file.read(reinterpret_cast<char*>(&tileHeader), sizeof(NavMeshTileHeader));
+        if (!file || !tileHeader.tileRef || !tileHeader.dataSize)
+            break;
+
+        unsigned char* data = (unsigned char*)dtAlloc(tileHeader.dataSize, DT_ALLOC_PERM);
+        if (!data) break;
+        memset(data, 0, tileHeader.dataSize);
+        file.read(reinterpret_cast<char*>(data), tileHeader.dataSize);
+        if (!file) {
+            dtFree(data);
+            break;
+        }
+
+        mesh->addTile(data, tileHeader.dataSize, DT_TILE_FREE_DATA, tileHeader.tileRef, 0);
+    }
+
+    return mesh;
+}
+
+void renderNavMesh(const dtNavMesh* navMesh) {
+    const int maxTiles = navMesh->getMaxTiles();
+    std::vector<float> vertices;
+
+    for (int i = 0; i < maxTiles; i++) {
+        const dtMeshTile* tile = navMesh->getTile(i);
+        if (!tile || !tile->header) continue;
+
+        const dtPoly* polys = tile->polys;
+        const dtPolyDetail* detailPolys = tile->detailMeshes;
+        const float* verts = tile->verts; // Changed from dtVert* to float*
+        const dtLink* links = tile->links;
+
+        for (int j = 0; j < tile->header->polyCount; j++) {
+            const dtPoly* poly = &polys[j];
+            const dtPolyDetail* detail = &detailPolys[j];
+
+            // Iterate over triangle detail polygons
+            for (int k = 0; k < detail->triCount; k++) {
+                const unsigned char* tri = &tile->detailTris[(detail->triBase + k) * 4];
+                for (int m = 0; m < 3; m++) {
+                    unsigned short vertIndex = tri[m];
+                    const float* v = &verts[vertIndex * 3];
+                    vertices.push_back(v[0]);
+                    vertices.push_back(v[1]);
+                    vertices.push_back(v[2]);
+                }
+            }
+        }
+    }
+
+    // Send vertices to OpenGL (the rendering function)
+    GLuint VBO, VAO;
+    glGenVertexArrays(1, &VAO);
+    glGenBuffers(1, &VBO);
+
+    glBindVertexArray(VAO);
+    glBindBuffer(GL_ARRAY_BUFFER, VBO);
+    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_STATIC_DRAW);
+
+    // Position attribute
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+
+    glBindVertexArray(0);
+
+    // Rendering
+    glBindVertexArray(VAO);
+    glDrawArrays(GL_TRIANGLES, 0, vertices.size() / 3);
+    glBindVertexArray(0);
+
+    // Clean up
+    glDeleteVertexArrays(1, &VAO);
+    glDeleteBuffers(1, &VBO);
+}
+
+NavMeshRenderData createNavMeshRenderData(const dtNavMesh* navMesh) {
+    NavMeshRenderData renderData = { 0 };
+
+    std::vector<float> vertices;
+
+    for (int i = 0; i < navMesh->getMaxTiles(); i++) {
+        const dtMeshTile* tile = navMesh->getTile(i);
+        if (!tile || !tile->header) continue;
+
+        const dtPoly* polys = tile->polys;
+        const float* verts = tile->verts;
+        const dtPolyDetail* detailMeshes = tile->detailMeshes;
+        const float* detailVerts = tile->detailVerts;
+        const unsigned char* detailTris = tile->detailTris;
+
+        for (int j = 0; j < tile->header->polyCount; j++) {
+            const dtPoly* poly = &polys[j];
+            if (poly->getType() == DT_POLYTYPE_OFFMESH_CONNECTION)
+                continue;
+
+            const dtPolyDetail* pd = &detailMeshes[j];
+
+            for (int k = 0; k < pd->triCount; ++k) {
+                const unsigned char* t = &detailTris[(pd->triBase + k) * 4];
+
+                for (int m = 0; m < 3; ++m) {
+                    int vertIndex;
+                    if (t[m] < poly->vertCount) {
+                        vertIndex = poly->verts[t[m]];
+                        vertices.push_back(verts[vertIndex * 3]);
+                        vertices.push_back(verts[vertIndex * 3 + 1]);
+                        vertices.push_back(verts[vertIndex * 3 + 2]);
+                    }
+                    else {
+                        vertIndex = t[m] - poly->vertCount;
+                        vertices.push_back(detailVerts[(pd->vertBase + vertIndex) * 3]);
+                        vertices.push_back(detailVerts[(pd->vertBase + vertIndex) * 3 + 1]);
+                        vertices.push_back(detailVerts[(pd->vertBase + vertIndex) * 3 + 2]);
+                    }
+                }
+            }
+        }
+    }
+
+    renderData.vertexCount = vertices.size() / 3;
+
+    glGenVertexArrays(1, &renderData.VAO);
+    glGenBuffers(1, &renderData.VBO);
+
+    glBindVertexArray(renderData.VAO);
+    glBindBuffer(GL_ARRAY_BUFFER, renderData.VBO);
+    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_STATIC_DRAW);
+
+    // Position attribute
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+
+    glBindVertexArray(0);
+
+    return renderData;
 }
 
 int main() {
@@ -235,90 +456,109 @@ int main() {
     glEnable(GL_DEPTH_TEST);
 
     // Load the model
-    std::vector<Mesh> meshes = loadModel(FileSystemUtils::getAssetFilePath("models/nav_test2.obj"));
+    std::vector<Mesh> meshes = loadModel(FileSystemUtils::getAssetFilePath("models/nav_test_tutorial_map.obj"));
 
-    // Build and compile the shader program
-    // Vertex Shader
-    GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
-    glShaderSource(vertexShader, 1, &vertexShaderSource, NULL);
-    glCompileShader(vertexShader);
+    // Build and compile the shader program using compileShader()
+    GLuint vertexShader = compileShader(GL_VERTEX_SHADER, vertexShaderSource);
+    GLuint fragmentShader = compileShader(GL_FRAGMENT_SHADER, fragmentShaderSource);
 
-    // Check for shader compile errors
-    int success;
-    char infoLog[512];
-    glGetShaderiv(vertexShader, GL_COMPILE_STATUS, &success);
-    if (!success) {
-        glGetShaderInfoLog(vertexShader, 512, NULL, infoLog);
-        std::cerr << "ERROR::SHADER::VERTEX::COMPILATION_FAILED\n" << infoLog << std::endl;
-    }
-
-    // Fragment Shader
-    GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
-    glShaderSource(fragmentShader, 1, &fragmentShaderSource, NULL);
-    glCompileShader(fragmentShader);
-
-    // Check for shader compile errors
-    glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &success);
-    if (!success) {
-        glGetShaderInfoLog(fragmentShader, 512, NULL, infoLog);
-        std::cerr << "ERROR::SHADER::FRAGMENT::COMPILATION_FAILED\n" << infoLog << std::endl;
-    }
-
-    // Link shaders
+    // Link shaders into a shader program
     GLuint shaderProgram = glCreateProgram();
     glAttachShader(shaderProgram, vertexShader);
     glAttachShader(shaderProgram, fragmentShader);
     glLinkProgram(shaderProgram);
 
     // Check for linking errors
+    GLint success;
+    char infoLog[512];
     glGetProgramiv(shaderProgram, GL_LINK_STATUS, &success);
     if (!success) {
         glGetProgramInfoLog(shaderProgram, 512, NULL, infoLog);
-        std::cerr << "ERROR::SHADER::PROGRAM::LINKING_FAILED\n" << infoLog << std::endl;
+        std::cerr << "ERROR::MODEL_SHADER::PROGRAM::LINKING_FAILED\n" << infoLog << std::endl;
     }
     glDeleteShader(vertexShader);
     glDeleteShader(fragmentShader);
 
+    // Compile and link navmesh shader program
+    GLuint navmeshVertexShader = compileShader(GL_VERTEX_SHADER, navmeshVertexShaderSource);
+    GLuint navmeshFragmentShader = compileShader(GL_FRAGMENT_SHADER, navmeshFragmentShaderSource);
+
+    GLuint navmeshShaderProgram = glCreateProgram();
+    glAttachShader(navmeshShaderProgram, navmeshVertexShader);
+    glAttachShader(navmeshShaderProgram, navmeshFragmentShader);
+    glLinkProgram(navmeshShaderProgram);
+
+    // Check for linking errors
+    glGetProgramiv(navmeshShaderProgram, GL_LINK_STATUS, &success);
+    if (!success) {
+        glGetProgramInfoLog(navmeshShaderProgram, 512, NULL, infoLog);
+        std::cerr << "ERROR::NAVMESH_SHADER::PROGRAM::LINKING_FAILED\n" << infoLog << std::endl;
+    }
+    glDeleteShader(navmeshVertexShader);
+    glDeleteShader(navmeshFragmentShader);
+
+    // Load the navmesh
+    dtNavMesh* navMesh = loadNavMeshFromFile(FileSystemUtils::getAssetFilePath("models/tutorial_navmesh.bin").c_str());
+    if (!navMesh) {
+        std::cerr << "Failed to load navmesh!" << std::endl;
+        return -1;
+    }
+
+    // Create the navmesh render data
+    NavMeshRenderData navMeshRenderData = createNavMeshRenderData(navMesh);
+
     // Render loop
     while (!glfwWindowShouldClose(window)) {
+        // Time calculations
         float currentFrame = static_cast<float>(glfwGetTime());
         deltaTime = currentFrame - lastFrame;
         lastFrame = currentFrame;
 
-        double currentTime = glfwGetTime();
-        double elapsedTime = currentTime - previousTime;
-        frameCount++;
-
         processInput(window);
 
-        // Input
         if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
-            glfwSetWindowShouldClose(window, true);
+        {
+            glfwTerminate();
+            return 0;
+        }
 
         // Render
         glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        // Use the shader program
-        glUseProgram(shaderProgram);
-
         // Set up view and projection matrices
         glm::mat4 view = camera.getViewMatrix();
         glm::mat4 projection = camera.getProjectionMatrix((float)WIDTH / (float)HEIGHT);
 
-        // Pass view and projection matrices to the shader
+        // Render the model
+        glUseProgram(shaderProgram);
         GLuint viewLoc = glGetUniformLocation(shaderProgram, "view");
         GLuint projLoc = glGetUniformLocation(shaderProgram, "projection");
         glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
         glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projection));
 
-        // Render the loaded meshes
         for (const auto& mesh : meshes) {
             glm::mat4 model = glm::mat4(1.0f);
             GLuint modelLoc = glGetUniformLocation(shaderProgram, "model");
             glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
             mesh.Draw(shaderProgram);
         }
+
+        // Render the navmesh
+        glUseProgram(navmeshShaderProgram);
+        GLuint navModelLoc = glGetUniformLocation(navmeshShaderProgram, "model");
+        GLuint navViewLoc = glGetUniformLocation(navmeshShaderProgram, "view");
+        GLuint navProjLoc = glGetUniformLocation(navmeshShaderProgram, "projection");
+        GLuint colorLoc = glGetUniformLocation(navmeshShaderProgram, "color");
+
+        glUniformMatrix4fv(navModelLoc, 1, GL_FALSE, glm::value_ptr(glm::mat4(1.0f)));
+        glUniformMatrix4fv(navViewLoc, 1, GL_FALSE, glm::value_ptr(view));
+        glUniformMatrix4fv(navProjLoc, 1, GL_FALSE, glm::value_ptr(projection));
+        glUniform4f(colorLoc, 0.0f, 1.0f, 0.0f, 1.0f); // Set the navmesh color to green
+
+        glBindVertexArray(navMeshRenderData.VAO);
+        glDrawArrays(GL_TRIANGLES, 0, navMeshRenderData.vertexCount);
+        glBindVertexArray(0);
 
         // Swap buffers and poll IO events
         glfwSwapBuffers(window);
@@ -327,6 +567,10 @@ int main() {
 
     // Clean up
     glDeleteProgram(shaderProgram);
+    glDeleteProgram(navmeshShaderProgram);
+    glDeleteVertexArrays(1, &navMeshRenderData.VAO);
+    glDeleteBuffers(1, &navMeshRenderData.VBO);
+    dtFreeNavMesh(navMesh);
 
     glfwTerminate();
     return 0;
