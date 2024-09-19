@@ -178,9 +178,9 @@ struct Mesh {
         glUseProgram(shaderProgram);
         glBindVertexArray(VAO);
 
-        // Set the color uniform (e.g., white color)
+        // Set the color uniform
         GLuint colorLoc = glGetUniformLocation(shaderProgram, "color");
-        glUniform4f(colorLoc, 1.0f, 1.0f, 1.0f, 1.0f);
+        glUniform4f(colorLoc, 0.3f, 0.3f, 0.3f, 1.0f);
 
         glDrawElements(GL_TRIANGLES, indices.size(), GL_UNSIGNED_INT, 0);
         glBindVertexArray(0);
@@ -606,7 +606,7 @@ int main() {
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 
         // Set the color for off-mesh connections (e.g., red)
-        glUniform4f(colorLoc, 1.0f, 0.0f, 0.0f, 1.0f); // Red color
+        glUniform4f(colorLoc, 1.0f, 1.0f, 0.0f, 1.0f); // Red color
 
         // Render off-mesh connections as lines
         glBindVertexArray(navMeshRenderData.offMeshVAO);
