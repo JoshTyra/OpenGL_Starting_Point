@@ -260,15 +260,22 @@ struct NavMeshRenderData {
 
 struct AICube {
     glm::vec3 position;
+    glm::vec3 forwardDirection;  // Forward direction for rotation
     float speed;
     int currentTargetIndex;
+    float rotation;  // Angle of rotation for the cube
 
     AICube(const glm::vec3& startPos, float spd)
-        : position(startPos), speed(spd), currentTargetIndex(0) {}
+        : position(startPos), speed(spd), currentTargetIndex(0), rotation(0.0f) {}
 
     void moveTo(const float* targetPos) {
         glm::vec3 target = glm::vec3(targetPos[0], targetPos[1], targetPos[2]);
-        glm::vec3 direction = glm::normalize(target - position);
+        forwardDirection = glm::normalize(target - position);
+
+        // Calculate the new rotation based on forward direction
+        rotation = glm::atan(forwardDirection.z, forwardDirection.x);
+
+        glm::vec3 direction = forwardDirection;
         position += direction * speed * deltaTime;
 
         // Check if the cube reached the target
@@ -775,7 +782,7 @@ int main() {
 
     // Define start and end positions
     glm::vec3 startPos(-21.8736f, 7.4302f, 36.6749f);
-    glm::vec3 endPos(2.60156f, 2.62101f, -24.6509f);
+    glm::vec3 endPos(26.7969f, 10.85f, -36.5916f);
 
     performPathfinding(startPos, endPos);
 
@@ -812,7 +819,7 @@ int main() {
     glm::vec3 cubeStartPosition(-21.8736f, 7.4302f, 36.6749f);  // Example start position for the cube
 
     // Create the AI Cube object
-    AICube aiCube(cubeStartPosition, 2.0f);  // Set speed to 2.0 (can be adjusted)
+    AICube aiCube(cubeStartPosition, 5.0f);  // Set speed to 2.0 (can be adjusted)
 
     performPathfinding(cubeStartPosition, endPos);
 
@@ -975,6 +982,10 @@ int main() {
 
         glm::mat4 model = glm::mat4(1.0f);
         model = glm::translate(model, aiCube.position);  // Move cube to AI position
+
+        // Apply rotation based on the forward direction
+        model = glm::rotate(model, aiCube.rotation, glm::vec3(0.0f, 1.0f, 0.0f));  // Rotate around Y-axis
+
         GLuint modelLoc = glGetUniformLocation(shaderProgram, "model");
         glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
         glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
