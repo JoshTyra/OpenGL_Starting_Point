@@ -15,6 +15,7 @@
 // RecastDetour 
 #include "DetourNavMesh.h"
 #include "DetourNavMeshQuery.h"
+#include "DetourCommon.h"
 #include <cstdio>
 
 // Constants and global variables
@@ -29,6 +30,21 @@ double previousTime = 0.0;
 int frameCount = 0;
 
 Camera camera(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), -180.0f, 0.0f, 6.0f, 0.1f, 45.0f);
+
+GLuint pathVAO, pathVBO;
+
+dtNavMeshQuery* navQuery;
+dtQueryFilter queryFilter;
+
+// Max number of polygons in the path
+const int MAX_POLYS = 256;
+dtPolyRef polys[MAX_POLYS];
+int numPolys;
+
+// Max number of points in the smooth path
+const int MAX_SMOOTH_PATH = 2048;
+float smoothPath[MAX_SMOOTH_PATH * 3];
+int smoothPathCount;
 
 const char* vertexShaderSource = R"(
     #version 330 core
@@ -460,6 +476,170 @@ NavMeshRenderData createNavMeshRenderData(const dtNavMesh* navMesh) {
     return renderData;
 }
 
+int fixupCorridor(dtPolyRef* path, int npath, int maxPath,
+    const dtPolyRef* visited, int nvisited) {
+    int furthestPath = -1;
+    int furthestVisited = -1;
+
+    // Find furthest common polygon
+    for (int i = npath - 1; i >= 0; --i) {
+        bool found = false;
+        for (int j = nvisited - 1; j >= 0; --j) {
+            if (path[i] == visited[j]) {
+                furthestPath = i;
+                furthestVisited = j;
+                found = true;
+                break;
+            }
+        }
+        if (found)
+            break;
+    }
+
+    // If no intersection found, return current path
+    if (furthestPath == -1 || furthestVisited == -1)
+        return npath;
+
+    // Adjust the path
+    int req = nvisited - furthestVisited;
+    int orig = furthestPath + 1 < npath ? npath - (furthestPath + 1) : 0;
+    int size = dtMin(req + orig, maxPath);
+
+    // Rearrange path
+    if (size > 0) {
+        dtPolyRef tempPath[MAX_POLYS];
+        memcpy(tempPath, &visited[furthestVisited], sizeof(dtPolyRef) * req);
+        if (orig > 0)
+            memcpy(&tempPath[req], &path[furthestPath + 1], sizeof(dtPolyRef) * orig);
+        memcpy(path, tempPath, sizeof(dtPolyRef) * size);
+    }
+
+    return size;
+}
+
+bool getSteerTarget(dtNavMeshQuery* navQuery, const float* startPos, const float* endPos, float minTargetDist,
+    const dtPolyRef* path, int pathSize, float* steerPos, unsigned char& steerPosFlag, dtPolyRef& steerPosRef) {
+    // Find steer target
+    static const int MAX_STEER_POINTS = 3;
+    float steerPath[MAX_STEER_POINTS * 3];
+    unsigned char steerPathFlags[MAX_STEER_POINTS];
+    dtPolyRef steerPathPolys[MAX_STEER_POINTS];
+    int nsteerPath = 0;
+    navQuery->findStraightPath(startPos, endPos, path, pathSize,
+        steerPath, steerPathFlags, steerPathPolys, &nsteerPath, MAX_STEER_POINTS);
+
+    if (nsteerPath == 0)
+        return false;
+
+    // Find the point to steer towards
+    int ns = 0;
+    while (ns < nsteerPath) {
+        // Stop at the first point that is further than minTargetDist
+        float dist = dtVdist2D(&steerPath[ns * 3], startPos);
+        if (dist > minTargetDist)
+            break;
+        ns++;
+    }
+
+    if (ns >= nsteerPath)
+        return false;
+
+    memcpy(steerPos, &steerPath[ns * 3], sizeof(float) * 3);
+    steerPos[1] = startPos[1]; // Keep same height
+    steerPosFlag = steerPathFlags[ns];
+    steerPosRef = steerPathPolys[ns];
+
+    return true;
+}
+
+void getSmoothPath(const float* startPos, const float* endPos, dtPolyRef* polys, int numPolys) {
+    float iterPos[3], targetPos[3];
+    navQuery->closestPointOnPolyBoundary(polys[0], startPos, iterPos);
+    navQuery->closestPointOnPolyBoundary(polys[numPolys - 1], endPos, targetPos);
+
+    smoothPathCount = 0;
+
+    static const float STEP_SIZE = 0.5f;
+    static const float SLOP = 0.01f;
+
+    memcpy(&smoothPath[smoothPathCount * 3], iterPos, sizeof(float) * 3);
+    smoothPathCount++;
+
+    while (smoothPathCount < MAX_SMOOTH_PATH) {
+        // Find the current polygon's neighbors and the straight path to the next corner
+        float steerPos[3];
+        unsigned char steerPosFlag;
+        dtPolyRef steerPosRef;
+
+        if (!getSteerTarget(navQuery, iterPos, targetPos, SLOP, polys, numPolys, steerPos, steerPosFlag, steerPosRef))
+            break;
+
+        // Find movement delta
+        float delta[3], len;
+        dtVsub(delta, steerPos, iterPos);
+        len = dtMathSqrtf(dtVdot(delta, delta));
+
+        // If steerPos is within slop radius, advance to next steer target
+        if (len < STEP_SIZE) {
+            len = 1.0f;
+        }
+        else {
+            len = STEP_SIZE / len;
+        }
+
+        float moveTgt[3];
+        dtVmad(moveTgt, iterPos, delta, len);
+
+        // Move
+        float result[3];
+        dtPolyRef visited[16];
+        int nvisited = 0;
+        navQuery->moveAlongSurface(polys[0], iterPos, moveTgt, &queryFilter, result, visited, &nvisited, 16);
+
+        numPolys = fixupCorridor(polys, numPolys, MAX_POLYS, visited, nvisited);
+        navQuery->getPolyHeight(polys[0], result, &result[1]);
+
+        memcpy(iterPos, result, sizeof(float) * 3);
+
+        // Store the result
+        memcpy(&smoothPath[smoothPathCount * 3], iterPos, sizeof(float) * 3);
+        smoothPathCount++;
+
+        // Check if reached the target
+        float endDelta[3];
+        dtVsub(endDelta, iterPos, targetPos);
+        if (dtVdot(endDelta, endDelta) < SLOP * SLOP)
+            break;
+    }
+}
+
+void performPathfinding(const glm::vec3& startPos, const glm::vec3& endPos) {
+    // Convert glm::vec3 to float arrays
+    float startPosArray[3] = { startPos.x, startPos.y, startPos.z };
+    float endPosArray[3] = { endPos.x, endPos.y, endPos.z };
+
+    // Variables to store the results
+    dtPolyRef startRef, endRef;
+    float nearestStartPos[3], nearestEndPos[3];
+
+    // Search extents
+    float extents[3] = { 2.0f, 4.0f, 2.0f };
+
+    // Find nearest polygons to the start and end points
+    navQuery->findNearestPoly(startPosArray, extents, &queryFilter, &startRef, nearestStartPos);
+    navQuery->findNearestPoly(endPosArray, extents, &queryFilter, &endRef, nearestEndPos);
+
+    // Find the path corridor
+    navQuery->findPath(startRef, endRef, nearestStartPos, nearestEndPos, &queryFilter, polys, &numPolys, MAX_POLYS);
+
+    // Generate the smooth path
+    getSmoothPath(nearestStartPos, nearestEndPos, polys, numPolys);
+
+    // Update the path VBO with smooth path
+    glBindBuffer(GL_ARRAY_BUFFER, pathVBO);
+    glBufferData(GL_ARRAY_BUFFER, smoothPathCount * 3 * sizeof(float), smoothPath, GL_STATIC_DRAW);
+}
+
 int main() {
     // Initialize GLFW
     if (!glfwInit()) {
@@ -544,8 +724,66 @@ int main() {
         return -1;
     }
 
+    // Initialize the navigation query
+    navQuery = new dtNavMeshQuery();
+    dtStatus status = navQuery->init(navMesh, 2048); // 2048 is the maximum number of nodes (you can adjust this)
+    if (dtStatusFailed(status)) {
+        std::cerr << "Failed to initialize nav mesh query" << std::endl;
+        return -1;
+    }
+
+    // Initialize the query filter (set default values or customize as needed)
+    queryFilter.setIncludeFlags(0xffff);
+    queryFilter.setExcludeFlags(0);
+
+    // Define start and end positions
+    glm::vec3 startPos(-5.0f, 0.0f, -5.0f);
+    glm::vec3 endPos(5.0f, 0.0f, 5.0f);
+
+    performPathfinding(startPos, endPos);
+
+    // Convert glm::vec3 to float arrays
+    float startPosArray[3] = { startPos.x, startPos.y, startPos.z };
+    float endPosArray[3] = { endPos.x, endPos.y, endPos.z };
+
+    // Variables to store the results
+    dtPolyRef startRef, endRef;
+    float nearestStartPos[3], nearestEndPos[3];
+
+    // Search extents (tolerance for finding nearest polygon)
+    float extents[3] = { 2.0f, 4.0f, 2.0f }; // [x, y, z] extents
+
+    // Find nearest polygons to the start and end points
+    navQuery->findNearestPoly(startPosArray, extents, &queryFilter, &startRef, nearestStartPos);
+    navQuery->findNearestPoly(endPosArray, extents, &queryFilter, &endRef, nearestEndPos);
+
+    // Max number of polygons in the path
+    const int MAX_POLYS = 256;
+    dtPolyRef polys[MAX_POLYS];
+    int numPolys;
+
+    // Find the path corridor
+    navQuery->findPath(startRef, endRef, nearestStartPos, nearestEndPos, &queryFilter, polys, &numPolys, MAX_POLYS);
+
+    // Generate the smooth path
+    getSmoothPath(nearestStartPos, nearestEndPos, polys, numPolys);
+
     // Create the navmesh render data
     NavMeshRenderData navMeshRenderData = createNavMeshRenderData(navMesh);
+
+    // Path rendering data
+    glGenVertexArrays(1, &pathVAO);
+    glGenBuffers(1, &pathVBO);
+
+    glBindVertexArray(pathVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, pathVBO);
+    glBufferData(GL_ARRAY_BUFFER, smoothPathCount * 3 * sizeof(float), smoothPath, GL_STATIC_DRAW);
+
+    // Position attribute
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+
+    glBindVertexArray(0);
 
     // Render loop
     while (!glfwWindowShouldClose(window)) {
@@ -613,6 +851,14 @@ int main() {
         glDrawArrays(GL_LINES, 0, navMeshRenderData.offMeshVertexCount);
         glBindVertexArray(0);
 
+        // Set the color for the path (e.g., blue)
+        glUniform4f(colorLoc, 0.0f, 0.0f, 1.0f, 1.0f); // Blue color
+
+        // Render the path as a line strip
+        glBindVertexArray(pathVAO);
+        glDrawArrays(GL_LINE_STRIP, 0, smoothPathCount);
+        glBindVertexArray(0);
+
         // Swap buffers and poll IO events
         glfwSwapBuffers(window);
         glfwPollEvents();
@@ -625,7 +871,13 @@ int main() {
     glDeleteBuffers(1, &navMeshRenderData.VBO);
     glDeleteVertexArrays(1, &navMeshRenderData.offMeshVAO);
     glDeleteBuffers(1, &navMeshRenderData.offMeshVBO);
+
+    // Delete path rendering data
+    glDeleteVertexArrays(1, &pathVAO);
+    glDeleteBuffers(1, &pathVBO);
+
     dtFreeNavMesh(navMesh);
+    delete navQuery;
 
     glfwTerminate();
     return 0;
