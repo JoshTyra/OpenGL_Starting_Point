@@ -230,6 +230,8 @@ std::vector<Mesh> loadModel(const std::string& path) {
 #define NAVMESHSET_MAGIC 'MSET'
 #define NAVMESHSET_VERSION 1
 
+std::vector<float> offMeshConnectionVertices;
+
 struct NavMeshSetHeader {
     int magic;
     int version;
@@ -246,6 +248,9 @@ struct NavMeshRenderData {
     GLuint VAO;
     GLuint VBO;
     size_t vertexCount;
+    GLuint offMeshVAO;
+    GLuint offMeshVBO;
+    size_t offMeshVertexCount;
 };
 
 dtNavMesh* loadNavMeshFromFile(const char* path) {
@@ -362,6 +367,7 @@ NavMeshRenderData createNavMeshRenderData(const dtNavMesh* navMesh) {
     NavMeshRenderData renderData = { 0 };
 
     std::vector<float> vertices;
+    std::vector<float> offMeshConnectionVertices;
 
     for (int i = 0; i < navMesh->getMaxTiles(); i++) {
         const dtMeshTile* tile = navMesh->getTile(i);
@@ -375,11 +381,29 @@ NavMeshRenderData createNavMeshRenderData(const dtNavMesh* navMesh) {
 
         for (int j = 0; j < tile->header->polyCount; j++) {
             const dtPoly* poly = &polys[j];
-            if (poly->getType() == DT_POLYTYPE_OFFMESH_CONNECTION)
-                continue;
-
             const dtPolyDetail* pd = &detailMeshes[j];
 
+            if (poly->getType() == DT_POLYTYPE_OFFMESH_CONNECTION) {
+                // Process off-mesh connections
+                unsigned int idx0 = poly->verts[0];
+                unsigned int idx1 = poly->verts[1];
+
+                const float* v0 = &verts[idx0 * 3];
+                const float* v1 = &verts[idx1 * 3];
+
+                // Store the two endpoints to render later
+                offMeshConnectionVertices.push_back(v0[0]);
+                offMeshConnectionVertices.push_back(v0[1]);
+                offMeshConnectionVertices.push_back(v0[2]);
+
+                offMeshConnectionVertices.push_back(v1[0]);
+                offMeshConnectionVertices.push_back(v1[1]);
+                offMeshConnectionVertices.push_back(v1[2]);
+
+                continue;
+            }
+
+            // Existing code for normal polygons
             for (int k = 0; k < pd->triCount; ++k) {
                 const unsigned char* t = &detailTris[(pd->triBase + k) * 4];
 
@@ -402,6 +426,7 @@ NavMeshRenderData createNavMeshRenderData(const dtNavMesh* navMesh) {
         }
     }
 
+    // Create VAO and VBO for navmesh
     renderData.vertexCount = vertices.size() / 3;
 
     glGenVertexArrays(1, &renderData.VAO);
@@ -414,6 +439,21 @@ NavMeshRenderData createNavMeshRenderData(const dtNavMesh* navMesh) {
     // Position attribute
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
+
+    glBindVertexArray(0);
+
+    // Create VAO and VBO for off-mesh connections
+    glGenVertexArrays(1, &renderData.offMeshVAO);
+    glGenBuffers(1, &renderData.offMeshVBO);
+
+    glBindVertexArray(renderData.offMeshVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, renderData.offMeshVBO);
+    glBufferData(GL_ARRAY_BUFFER, offMeshConnectionVertices.size() * sizeof(float), offMeshConnectionVertices.data(), GL_STATIC_DRAW);
+
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+
+    renderData.offMeshVertexCount = offMeshConnectionVertices.size() / 3;
 
     glBindVertexArray(0);
 
@@ -565,6 +605,14 @@ int main() {
         // Reset to fill mode after rendering navmesh
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 
+        // Set the color for off-mesh connections (e.g., red)
+        glUniform4f(colorLoc, 1.0f, 0.0f, 0.0f, 1.0f); // Red color
+
+        // Render off-mesh connections as lines
+        glBindVertexArray(navMeshRenderData.offMeshVAO);
+        glDrawArrays(GL_LINES, 0, navMeshRenderData.offMeshVertexCount);
+        glBindVertexArray(0);
+
         // Swap buffers and poll IO events
         glfwSwapBuffers(window);
         glfwPollEvents();
@@ -575,6 +623,8 @@ int main() {
     glDeleteProgram(navmeshShaderProgram);
     glDeleteVertexArrays(1, &navMeshRenderData.VAO);
     glDeleteBuffers(1, &navMeshRenderData.VBO);
+    glDeleteVertexArrays(1, &navMeshRenderData.offMeshVAO);
+    glDeleteBuffers(1, &navMeshRenderData.offMeshVBO);
     dtFreeNavMesh(navMesh);
 
     glfwTerminate();
