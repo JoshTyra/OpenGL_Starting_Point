@@ -118,17 +118,6 @@ GLuint compileShader(GLenum type, const char* source) {
     return shader;
 }
 
-void processInput(GLFWwindow* window) {
-    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
-        camera.processKeyboardInput(GLFW_KEY_W, deltaTime);
-    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
-        camera.processKeyboardInput(GLFW_KEY_S, deltaTime);
-    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
-        camera.processKeyboardInput(GLFW_KEY_A, deltaTime);
-    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
-        camera.processKeyboardInput(GLFW_KEY_D, deltaTime);
-}
-
 void mouseCallback(GLFWwindow* window, double xpos, double ypos) {
     static bool firstMouse = true;
     static float lastX = WIDTH / 2.0f;
@@ -267,6 +256,26 @@ struct NavMeshRenderData {
     GLuint offMeshVAO;
     GLuint offMeshVBO;
     size_t offMeshVertexCount;
+};
+
+struct AICube {
+    glm::vec3 position;
+    float speed;
+    int currentTargetIndex;
+
+    AICube(const glm::vec3& startPos, float spd)
+        : position(startPos), speed(spd), currentTargetIndex(0) {}
+
+    void moveTo(const float* targetPos) {
+        glm::vec3 target = glm::vec3(targetPos[0], targetPos[1], targetPos[2]);
+        glm::vec3 direction = glm::normalize(target - position);
+        position += direction * speed * deltaTime;
+
+        // Check if the cube reached the target
+        if (glm::distance(position, target) < 0.1f) {
+            currentTargetIndex++;
+        }
+    }
 };
 
 dtNavMesh* loadNavMeshFromFile(const char* path) {
@@ -640,6 +649,34 @@ void performPathfinding(const glm::vec3& startPos, const glm::vec3& endPos) {
     glBufferData(GL_ARRAY_BUFFER, smoothPathCount * 3 * sizeof(float), smoothPath, GL_STATIC_DRAW);
 }
 
+void processInput(GLFWwindow* window, AICube& aiCube) {
+    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
+        camera.processKeyboardInput(GLFW_KEY_W, deltaTime);
+    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+        camera.processKeyboardInput(GLFW_KEY_S, deltaTime);
+    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
+        camera.processKeyboardInput(GLFW_KEY_A, deltaTime);
+    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
+        camera.processKeyboardInput(GLFW_KEY_D, deltaTime);
+
+    if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS)
+    {
+        std::cout << "Camera Position X: " << std::endl << camera.getPosition().x <<
+            "Camera Position Y: " << std::endl << camera.getPosition().y <<
+            "Camera Position Z: " << std::endl << camera.getPosition().z << std::endl;
+    }
+
+    if (glfwGetKey(window, GLFW_KEY_P) == GLFW_PRESS) {
+        // Perform pathfinding when 'P' is pressed
+        glm::vec3 startPos = aiCube.position;
+        glm::vec3 endPos(2.60156f, 2.62101f, -24.6509f);  // Example destination
+        performPathfinding(startPos, endPos);
+
+        // Reset the cube's target index
+        aiCube.currentTargetIndex = 0;
+    }
+}
+
 int main() {
     // Initialize GLFW
     if (!glfwInit()) {
@@ -737,8 +774,8 @@ int main() {
     queryFilter.setExcludeFlags(0);
 
     // Define start and end positions
-    glm::vec3 startPos(-5.0f, 0.0f, -5.0f);
-    glm::vec3 endPos(5.0f, 0.0f, 5.0f);
+    glm::vec3 startPos(-21.8736f, 7.4302f, 36.6749f);
+    glm::vec3 endPos(2.60156f, 2.62101f, -24.6509f);
 
     performPathfinding(startPos, endPos);
 
@@ -771,6 +808,14 @@ int main() {
     // Create the navmesh render data
     NavMeshRenderData navMeshRenderData = createNavMeshRenderData(navMesh);
 
+    // Define start position for AI cube
+    glm::vec3 cubeStartPosition(-21.8736f, 7.4302f, 36.6749f);  // Example start position for the cube
+
+    // Create the AI Cube object
+    AICube aiCube(cubeStartPosition, 2.0f);  // Set speed to 2.0 (can be adjusted)
+
+    performPathfinding(cubeStartPosition, endPos);
+
     // Path rendering data
     glGenVertexArrays(1, &pathVAO);
     glGenBuffers(1, &pathVBO);
@@ -785,6 +830,65 @@ int main() {
 
     glBindVertexArray(0);
 
+    // Vertices for ai cube
+    float cubeVertices[] = {
+        // positions         
+        -0.5f, -0.5f, -0.5f,
+         0.5f, -0.5f, -0.5f,
+         0.5f,  0.5f, -0.5f,
+         0.5f,  0.5f, -0.5f,
+        -0.5f,  0.5f, -0.5f,
+        -0.5f, -0.5f, -0.5f,
+
+        -0.5f, -0.5f,  0.5f,
+         0.5f, -0.5f,  0.5f,
+         0.5f,  0.5f,  0.5f,
+         0.5f,  0.5f,  0.5f,
+        -0.5f,  0.5f,  0.5f,
+        -0.5f, -0.5f,  0.5f,
+
+        -0.5f,  0.5f,  0.5f,
+        -0.5f,  0.5f, -0.5f,
+        -0.5f, -0.5f, -0.5f,
+        -0.5f, -0.5f, -0.5f,
+        -0.5f, -0.5f,  0.5f,
+        -0.5f,  0.5f,  0.5f,
+
+         0.5f,  0.5f,  0.5f,
+         0.5f,  0.5f, -0.5f,
+         0.5f, -0.5f, -0.5f,
+         0.5f, -0.5f, -0.5f,
+         0.5f, -0.5f,  0.5f,
+         0.5f,  0.5f,  0.5f,
+
+        -0.5f, -0.5f, -0.5f,
+         0.5f, -0.5f, -0.5f,
+         0.5f, -0.5f,  0.5f,
+         0.5f, -0.5f,  0.5f,
+        -0.5f, -0.5f,  0.5f,
+        -0.5f, -0.5f, -0.5f,
+
+        -0.5f,  0.5f, -0.5f,
+         0.5f,  0.5f, -0.5f,
+         0.5f,  0.5f,  0.5f,
+         0.5f,  0.5f,  0.5f,
+        -0.5f,  0.5f,  0.5f,
+        -0.5f,  0.5f, -0.5f
+    };
+
+    GLuint cubeVAO, cubeVBO;
+    glGenVertexArrays(1, &cubeVAO);
+    glGenBuffers(1, &cubeVBO);
+    glBindVertexArray(cubeVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, cubeVBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(cubeVertices), cubeVertices, GL_STATIC_DRAW);
+
+    // Define the position attribute
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+
+    glBindVertexArray(0);
+
     // Render loop
     while (!glfwWindowShouldClose(window)) {
         // Time calculations
@@ -792,7 +896,13 @@ int main() {
         deltaTime = currentFrame - lastFrame;
         lastFrame = currentFrame;
 
-        processInput(window);
+        processInput(window, aiCube);  // Pass the AI cube to the input handler
+
+        // Check if there is a path and move the AI cube along it
+        if (smoothPathCount > 0 && aiCube.currentTargetIndex < smoothPathCount) {
+            const float* targetPos = &smoothPath[aiCube.currentTargetIndex * 3];
+            aiCube.moveTo(targetPos);
+        }
 
         if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
             glfwTerminate();
@@ -857,6 +967,22 @@ int main() {
         // Render the path as a line strip
         glBindVertexArray(pathVAO);
         glDrawArrays(GL_LINE_STRIP, 0, smoothPathCount);
+        glBindVertexArray(0);
+
+        // Render the AI cube
+        glUseProgram(navmeshShaderProgram);
+        glBindVertexArray(cubeVAO);
+
+        glm::mat4 model = glm::mat4(1.0f);
+        model = glm::translate(model, aiCube.position);  // Move cube to AI position
+        GLuint modelLoc = glGetUniformLocation(shaderProgram, "model");
+        glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
+        glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
+        glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projection));
+        glUniform4f(colorLoc, 1.0f, 1.0f, 0.0f, 1.0f);
+
+        glDrawArrays(GL_TRIANGLES, 0, 36);
+
         glBindVertexArray(0);
 
         // Swap buffers and poll IO events
