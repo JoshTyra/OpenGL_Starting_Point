@@ -735,7 +735,7 @@ int main() {
     glEnable(GL_DEPTH_TEST);
 
     // Load the model
-    std::vector<Mesh> meshes = loadModel(FileSystemUtils::getAssetFilePath("models/nav_test_tutorial_map.obj"));
+    std::vector<Mesh> meshes = loadModel(FileSystemUtils::getAssetFilePath("models/test_plane.obj"));
 
     // Build and compile the shader program using compileShader()
     GLuint vertexShader = compileShader(GL_VERTEX_SHADER, vertexShaderSource);
@@ -777,7 +777,7 @@ int main() {
     glDeleteShader(navmeshFragmentShader);
 
     // Load the navmesh
-    dtNavMesh* navMesh = loadNavMeshFromFile(FileSystemUtils::getAssetFilePath("models/tutorial_navmesh.bin").c_str());
+    dtNavMesh* navMesh = loadNavMeshFromFile(FileSystemUtils::getAssetFilePath("models/test_plane.bin").c_str());
     if (!navMesh) {
         std::cerr << "Failed to load navmesh!" << std::endl;
         return -1;
@@ -796,8 +796,8 @@ int main() {
     queryFilter.setExcludeFlags(0);
 
     // Define start and end positions
-    glm::vec3 startPos(-21.8736f, 7.4302f, 36.6749f);
-    glm::vec3 endPos(26.7969f, 10.85f, -36.5916f);
+    glm::vec3 startPos(62.826f, 1.25716f, 45.6817f);
+    glm::vec3 endPos(-28.7087f, 1.3362f, -42.3046f);
 
     performPathfinding(startPos, endPos);
 
@@ -831,7 +831,7 @@ int main() {
     NavMeshRenderData navMeshRenderData = createNavMeshRenderData(navMesh);
 
     // Define start position for AI cube
-    glm::vec3 cubeStartPosition(-21.8736f, 7.4302f, 36.6749f);  // Example start position for the cube
+    glm::vec3 cubeStartPosition(62.826f, 1.25716f, 45.6817f);  // Example start position for the cube
 
     // Create the AI Cube object
     AICube aiCube(cubeStartPosition, 5.0f);  // Set speed to 2.0 (can be adjusted)
@@ -997,16 +997,21 @@ int main() {
         glBindVertexArray(cubeVAO);
 
         glm::mat4 model = glm::mat4(1.0f);
-        model = glm::translate(model, aiCube.position);  // Move cube to AI position
 
-        // Apply rotation based on the forward direction
+        // Move cube to AI position
+        model = glm::translate(model, aiCube.position);
+
+        // Apply rotation
         model = glm::rotate(model, aiCube.rotation, glm::vec3(0.0f, 1.0f, 0.0f));  // Rotate around Y-axis
 
-        GLuint modelLoc = glGetUniformLocation(shaderProgram, "model");
+        // Move cube up by 0.5 units to align bottom at position
+        model = glm::translate(model, glm::vec3(0.0f, 0.5f, 0.0f));
+
+        GLuint modelLoc = glGetUniformLocation(navmeshShaderProgram, "model");
         glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
-        glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
-        glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projection));
-        glUniform4f(colorLoc, 1.0f, 1.0f, 0.0f, 1.0f);
+        glUniformMatrix4fv(navViewLoc, 1, GL_FALSE, glm::value_ptr(view));
+        glUniformMatrix4fv(navProjLoc, 1, GL_FALSE, glm::value_ptr(projection));
+        glUniform4f(colorLoc, 1.0f, 1.0f, 0.0f, 1.0f);  // Cube color
 
         glDrawArrays(GL_TRIANGLES, 0, 36);
 
