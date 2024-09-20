@@ -263,20 +263,35 @@ struct AICube {
     glm::vec3 forwardDirection;  // Forward direction for rotation
     float speed;
     int currentTargetIndex;
-    float rotation;  // Angle of rotation for the cube
+    float rotation;      // Angle of rotation for the cube (in radians)
+    float rotationSpeed; // Speed at which the cube can rotate (radians per second)
 
     AICube(const glm::vec3& startPos, float spd)
-        : position(startPos), speed(spd), currentTargetIndex(0), rotation(0.0f) {}
+        : position(startPos), forwardDirection(1.0f, 0.0f, 0.0f),
+        speed(spd), currentTargetIndex(0), rotation(0.0f), rotationSpeed(2.0f) {}
 
     void moveTo(const float* targetPos) {
         glm::vec3 target = glm::vec3(targetPos[0], targetPos[1], targetPos[2]);
-        forwardDirection = glm::normalize(target - position);
+        glm::vec3 desiredDirection = glm::normalize(target - position);
 
-        // Calculate the new rotation based on forward direction
-        rotation = glm::atan(forwardDirection.z, forwardDirection.x);
+        // **Move towards the target**
+        position += desiredDirection * speed * deltaTime;
 
-        glm::vec3 direction = forwardDirection;
-        position += direction * speed * deltaTime;
+        // **Rotate smoothly towards the desired direction**
+        float desiredRotation = std::atan2(desiredDirection.z, desiredDirection.x);
+
+        // Calculate the smallest angle between current and desired rotation
+        float deltaAngle = desiredRotation - rotation;
+        // Wrap the angle between -? and ?
+        deltaAngle = std::fmod(deltaAngle + glm::pi<float>(), glm::two_pi<float>()) - glm::pi<float>();
+
+        // Limit the rotation to the rotation speed
+        float maxRotation = rotationSpeed * deltaTime;
+        deltaAngle = glm::clamp(deltaAngle, -maxRotation, maxRotation);
+        rotation += deltaAngle;
+
+        // Update forwardDirection based on the new rotation
+        forwardDirection = glm::vec3(std::cos(rotation), 0.0f, std::sin(rotation));
 
         // Check if the cube reached the target
         if (glm::distance(position, target) < 0.1f) {
@@ -820,6 +835,7 @@ int main() {
 
     // Create the AI Cube object
     AICube aiCube(cubeStartPosition, 5.0f);  // Set speed to 2.0 (can be adjusted)
+    aiCube.rotationSpeed = 3.0f;
 
     performPathfinding(cubeStartPosition, endPos);
 
