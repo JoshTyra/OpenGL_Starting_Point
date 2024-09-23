@@ -22,6 +22,20 @@
 #include "DetourCommon.h"
 #include <cstdio>
 
+void APIENTRY MessageCallback(GLenum source,
+    GLenum type,
+    GLuint id,
+    GLenum severity,
+    GLsizei length,
+    const GLchar* message,
+    const void* userParam)
+{
+    std::cerr << "GL CALLBACK: " << (type == GL_DEBUG_TYPE_ERROR ? "** GL ERROR **" : "")
+        << " type = " << type
+        << ", severity = " << severity
+        << ", message = " << message << std::endl;
+}
+
 // Constants and global variables
 const int WIDTH = 2560;
 const int HEIGHT = 1080;
@@ -712,7 +726,7 @@ int main() {
 
     // Create a GLFW window
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 4);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3); // Request OpenGL 4.3 or newer
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     GLFWwindow* window = glfwCreateWindow(WIDTH, HEIGHT, "OpenGL Basic Application", nullptr, nullptr);
     if (!window) {
@@ -732,6 +746,17 @@ int main() {
         std::cerr << "Failed to initialize GLEW" << std::endl;
         return -1;
     }
+
+    // Clear any GLEW errors
+    glGetError(); // Clear error flag set by GLEW
+
+    // Enable OpenGL debugging if supported
+    glEnable(GL_DEBUG_OUTPUT);
+    glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+    glDebugMessageCallback(MessageCallback, nullptr);
+
+    // Optionally filter which types of messages you want to log
+    glDebugMessageControl(GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, nullptr, GL_TRUE);
 
     // Define the viewport dimensions
     glViewport(0, 0, WIDTH, HEIGHT);
