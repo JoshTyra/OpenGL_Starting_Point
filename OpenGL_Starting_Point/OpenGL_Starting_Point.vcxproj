@@ -181,6 +181,7 @@ copy /Y "C:\Users\JT\Desktop\BehaviorTree.CPP-master\build\Release\behaviortree_
     <ClCompile Include="..\..\FrustumDebug\FrustumDebug\Camera.cpp" />
     <ClCompile Include="..\..\GameEngine\GameEngine\io\FileSystemUtils.cpp" />
     <ClCompile Include="OpenGL_Starting_Point.cpp" />
+    <ClCompile Include="Skybox.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\FrustumDebug\FrustumDebug\Camera.h" />

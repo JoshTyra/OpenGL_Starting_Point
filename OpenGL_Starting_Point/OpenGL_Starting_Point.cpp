@@ -1,11 +1,15 @@
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 #include <vector>
 #include <glm/gtc/type_ptr.hpp>
 #include <iostream>
+#include <fstream>
 #include "Camera.h"
 #include "FileSystemUtils.h"
-#include <fstream>
+#include "Skybox.h"
 
 // Asset Importer
 #include <assimp/Importer.hpp>
@@ -734,6 +738,21 @@ int main() {
 
     glEnable(GL_DEPTH_TEST);
 
+    std::vector<std::string> Skyboxfaces{
+    FileSystemUtils::getAssetFilePath("textures/cubemaps/right.tga"),
+    FileSystemUtils::getAssetFilePath("textures/cubemaps/left.tga"),
+    FileSystemUtils::getAssetFilePath("textures/cubemaps/top.tga"),
+    FileSystemUtils::getAssetFilePath("textures/cubemaps/bottom.tga"),
+    FileSystemUtils::getAssetFilePath("textures/cubemaps/front.tga"),
+    FileSystemUtils::getAssetFilePath("textures/cubemaps/back.tga")
+    };
+
+    Skybox skybox(Skyboxfaces);
+
+    if (!skybox.isValid()) {
+        std::cerr << "Skybox initialization failed!" << std::endl;
+    }
+
     // Load the model
     std::vector<Mesh> meshes = loadModel(FileSystemUtils::getAssetFilePath("models/test_plane.obj"));
 
@@ -799,6 +818,10 @@ int main() {
     glm::vec3 startPos(62.826f, 1.25716f, 45.6817f);
     glm::vec3 endPos(-28.7087f, 1.3362f, -42.3046f);
 
+    // Path rendering data
+    glGenVertexArrays(1, &pathVAO);
+    glGenBuffers(1, &pathVBO);
+
     performPathfinding(startPos, endPos);
 
     // Convert glm::vec3 to float arrays
@@ -838,10 +861,6 @@ int main() {
     aiCube.rotationSpeed = 3.0f;
 
     performPathfinding(cubeStartPosition, endPos);
-
-    // Path rendering data
-    glGenVertexArrays(1, &pathVAO);
-    glGenBuffers(1, &pathVBO);
 
     glBindVertexArray(pathVAO);
     glBindBuffer(GL_ARRAY_BUFFER, pathVBO);
@@ -939,6 +958,9 @@ int main() {
         // Set up view and projection matrices
         glm::mat4 view = camera.getViewMatrix();
         glm::mat4 projection = camera.getProjectionMatrix((float)WIDTH / (float)HEIGHT);
+
+        // Draw skybox here
+        skybox.draw(view, projection);
 
         // Render the model
         glUseProgram(shaderProgram);

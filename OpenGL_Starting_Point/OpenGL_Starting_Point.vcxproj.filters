@@ -40,6 +40,9 @@
     <ClCompile Include="..\..\..\..\Desktop\recastnavigation-main\DebugUtils\Source\RecastDebugDraw.cpp">
       <Filter>source</Filter>
     </ClCompile>
+    <ClCompile Include="Skybox.cpp">
+      <Filter>source</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Skybox.h">
