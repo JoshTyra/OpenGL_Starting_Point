@@ -65,7 +65,7 @@ float smoothPath[MAX_SMOOTH_PATH * 3];
 int smoothPathCount;
 
 const char* vertexShaderSource = R"(
-    #version 330 core
+    #version 430 core
     layout (location = 0) in vec3 aPos;
 
     uniform mat4 model;
@@ -79,7 +79,7 @@ const char* vertexShaderSource = R"(
     )";
 
 const char* fragmentShaderSource = R"(
-    #version 330 core
+    #version 430 core
     out vec4 FragColor;
 
     uniform vec4 color;
@@ -93,7 +93,7 @@ const char* fragmentShaderSource = R"(
 // Navmesh vertex shader
 const char* navmeshVertexShaderSource = R"(
     // navmesh_vertex_shader.glsl
-    #version 330 core
+    #version 430 core
     layout (location = 0) in vec3 aPos;
 
     uniform mat4 model;
@@ -108,7 +108,7 @@ const char* navmeshVertexShaderSource = R"(
 
 // Navmesh fragment shader
 const char* navmeshFragmentShaderSource = R"(
-    #version 330 core
+    #version 430 core
     out vec4 FragColor;
 
     uniform vec4 color;
