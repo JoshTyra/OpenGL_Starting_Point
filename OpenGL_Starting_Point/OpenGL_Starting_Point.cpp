@@ -47,7 +47,7 @@ float lastFrame = 0.0f; // Time of last frame
 double previousTime = 0.0;
 int frameCount = 0;
 
-Camera camera(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), -180.0f, 0.0f, 6.0f, 0.1f, 45.0f);
+Camera camera(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), -180.0f, 0.0f, 12.0f, 0.1f, 45.0f);
 
 GLuint pathVAO, pathVBO;
 
@@ -72,9 +72,13 @@ const char* vertexShaderSource = R"(
     uniform mat4 view;
     uniform mat4 projection;
 
+    out vec3 FragPos; // Pass the world position to the fragment shader
+
     void main()
     {
-        gl_Position = projection * view * model * vec4(aPos, 1.0);
+        vec4 worldPos = model * vec4(aPos, 1.0);
+        FragPos = worldPos.xyz;
+        gl_Position = projection * view * worldPos;
     }
     )";
 
@@ -82,11 +86,31 @@ const char* fragmentShaderSource = R"(
     #version 430 core
     out vec4 FragColor;
 
+    in vec3 FragPos; // Received from vertex shader
+
     uniform vec4 color;
+    uniform vec3 cameraPos;        // Camera position in world space
+    uniform vec3 fogColor;         // Color of the fog (e.g., vec3(0.5, 0.5, 0.5))
+    uniform float fogDensity;      // Controls how quickly the fog becomes dense
+    uniform float fogStartHeight;  // Height at which fog starts
+    uniform float fogHeightFalloff; // Controls the vertical density distribution
 
     void main()
     {
-        FragColor = color;
+        // Calculate distance from the camera to the fragment
+        float distance = length(FragPos - cameraPos);
+
+        // Calculate the height factor
+        float heightFactor = clamp((FragPos.y - fogStartHeight) * fogHeightFalloff, 0.0, 1.0);
+
+        // Exponential fog formula
+        float fogFactor = 1.0 - exp(-distance * fogDensity * heightFactor);
+
+        // Clamp the fog factor
+        fogFactor = clamp(fogFactor, 0.0, 1.0);
+
+        // Blend the original color with the fog color
+        FragColor = mix(color, vec4(fogColor, 1.0), fogFactor);
     }
     )";
 
@@ -781,7 +805,7 @@ int main() {
     skybox.printDebugInfo();
 
     // Load the model
-    std::vector<Mesh> meshes = loadModel(FileSystemUtils::getAssetFilePath("models/test_plane.obj"));
+    std::vector<Mesh> meshes = loadModel(FileSystemUtils::getAssetFilePath("models/nav_test_tutorial_map.obj"));
 
     // Build and compile the shader program using compileShader()
     GLuint vertexShader = compileShader(GL_VERTEX_SHADER, vertexShaderSource);
@@ -823,7 +847,7 @@ int main() {
     glDeleteShader(navmeshFragmentShader);
 
     // Load the navmesh
-    dtNavMesh* navMesh = loadNavMeshFromFile(FileSystemUtils::getAssetFilePath("models/test_plane.bin").c_str());
+    dtNavMesh* navMesh = loadNavMeshFromFile(FileSystemUtils::getAssetFilePath("models/tutorial_navmesh.bin").c_str());
     if (!navMesh) {
         std::cerr << "Failed to load navmesh!" << std::endl;
         return -1;
@@ -991,13 +1015,20 @@ int main() {
 
         // Render the model
         glUseProgram(shaderProgram);
-        GLuint viewLoc = glGetUniformLocation(shaderProgram, "view");
-        GLuint projLoc = glGetUniformLocation(shaderProgram, "projection");
-        glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
-        glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projection));
+
+        // Set uniform matrices
+        glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
+        glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+
+        // Set fog uniforms
+        glUniform3fv(glGetUniformLocation(shaderProgram, "cameraPos"), 1, glm::value_ptr(camera.getPosition()));
+        glUniform3f(glGetUniformLocation(shaderProgram, "fogColor"), 0.4f, 0.4f, 0.4f);
+        glUniform1f(glGetUniformLocation(shaderProgram, "fogDensity"), 0.1f); // Less dense fog
+        glUniform1f(glGetUniformLocation(shaderProgram, "fogStartHeight"), 0.0f); // Start fog below ground level
+        glUniform1f(glGetUniformLocation(shaderProgram, "fogHeightFalloff"), 5.0f); // Adjust vertical distribution
 
         for (const auto& mesh : meshes) {
-            glm::mat4 model = glm::mat4(1.0f);
+            glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, 0.0f));
             GLuint modelLoc = glGetUniformLocation(shaderProgram, "model");
             glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
             mesh.Draw(shaderProgram);
