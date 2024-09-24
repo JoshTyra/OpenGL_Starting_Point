@@ -71,8 +71,8 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <IncludePath>C:\Users\JT\Desktop\glfw-3.3.8.bin.WIN64\include;C:\Users\JT\Desktop\glew-2.1.0\include;C:\Users\JT\Desktop\glm-master;C:\Users\JT\source\repos\GameEngine\GameEngine;C:\Users\JT\Desktop\assimp-master\debug-build\include;C:\Users\JT\Desktop\assimp-master\include;C:\Users\JT\Desktop\stb-master;C:\Users\JT\source\repos\FrustumDebug\FrustumDebug;C:\Users\JT\Desktop\imgui-master;C:\Users\JT\Desktop\BehaviorTree.CPP-master\include;C:\Users\JT\Desktop\bullet3-master\src;C:\Users\JT\Desktop\recastnavigation-main\Detour\Include;C:\Users\JT\Desktop\recastnavigation-main\Recast\Include;C:\Users\JT\Desktop\recastnavigation-main\DebugUtils\Include;C:\Users\JT\Desktop\recastnavigation-main\DetourTileCache\Include;C:\Users\JT\Desktop\recastnavigation-main\DetourCrowd\Include;$(IncludePath)</IncludePath>
-    <LibraryPath>C:\Users\JT\Desktop\bullet3-master\build\lib\Debug;C:\Users\JT\Desktop\assimp-master\debug-build\lib\Debug;C:\Users\JT\Desktop\BehaviorTree.CPP-master\build\Debug;C:\Users\JT\Desktop\glfw-3.3.8.bin.WIN64\lib-vc2022;C:\Users\JT\Desktop\glew-2.1.0\lib\Release\x64;C:\Users\JT\Desktop\recastnavigation-main\build\Detour\Debug;C:\Users\JT\Desktop\recastnavigation-main\build\Recast\Debug;C:\Users\JT\Desktop\recastnavigation-main\build\DebugUtils\Debug;C:\Users\JT\Desktop\recastnavigation-main\build\DetourCrowd\Debug;C:\Users\JT\Desktop\recastnavigation-main\build\DetourTileCache\Debug;$(LibraryPath)</LibraryPath>
+    <IncludePath>C:\Users\JT\Desktop\glfw-3.3.8.bin.WIN64\include;C:\Users\JT\Desktop\glew-2.1.0\include;C:\Users\JT\Desktop\glm-master;C:\Users\JT\source\repos\GameEngine\GameEngine;C:\Users\JT\Desktop\assimp-master\debug-build\include;C:\Users\JT\Desktop\assimp-master\include;C:\Users\JT\Desktop\stb-master;C:\Users\JT\source\repos\FrustumDebug\FrustumDebug;C:\Users\JT\Desktop\imgui-master;C:\Users\JT\Desktop\BehaviorTree.CPP-master\include;C:\Users\JT\Desktop\bullet3-master\src;C:\Users\JT\Desktop\recastnavigation-main\Detour\Include;C:\Users\JT\Desktop\recastnavigation-main\Recast\Include;C:\Users\JT\Desktop\recastnavigation-main\DebugUtils\Include;C:\Users\JT\Desktop\recastnavigation-main\DetourTileCache\Include;C:\Users\JT\Desktop\recastnavigation-main\DetourCrowd\Include;C:\Program Files\KTX-Software\include;$(IncludePath)</IncludePath>
+    <LibraryPath>C:\Users\JT\Desktop\bullet3-master\build\lib\Debug;C:\Users\JT\Desktop\assimp-master\debug-build\lib\Debug;C:\Users\JT\Desktop\BehaviorTree.CPP-master\build\Debug;C:\Users\JT\Desktop\glfw-3.3.8.bin.WIN64\lib-vc2022;C:\Users\JT\Desktop\glew-2.1.0\lib\Release\x64;C:\Users\JT\Desktop\recastnavigation-main\build\Detour\Debug;C:\Users\JT\Desktop\recastnavigation-main\build\Recast\Debug;C:\Users\JT\Desktop\recastnavigation-main\build\DebugUtils\Debug;C:\Users\JT\Desktop\recastnavigation-main\build\DetourCrowd\Debug;C:\Users\JT\Desktop\recastnavigation-main\build\DetourTileCache\Debug;C:\Program Files\KTX-Software\lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <IncludePath>C:\Users\JT\Desktop\glfw-3.3.8.bin.WIN64\include;C:\Users\JT\Desktop\glew-2.1.0\include;C:\Users\JT\Desktop\glm-master;C:\Users\JT\source\repos\GameEngine\GameEngine;C:\Users\JT\Desktop\assimp-master\debug-build\include;C:\Users\JT\Desktop\assimp-master\include;C:\Users\JT\Desktop\stb-master;C:\Users\JT\source\repos\FrustumDebug\FrustumDebug;C:\Users\JT\Desktop\gli-master;C:\Users\JT\Desktop\imgui-master;C:\Users\JT\Desktop\imgui-master\backends;C:\Users\JT\Desktop\BehaviorTree.CPP-master\include;C:\Users\JT\Desktop\bullet3-master\src;$(IncludePath)</IncludePath>
@@ -119,12 +119,7 @@
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>glew32.lib;
-glfw3.lib;opengl32.lib;
-assimp-vc143-mtd.lib;behaviortree_cppd.lib;
-BulletCollision_Debug.lib
-;BulletDynamics_Debug.lib
-;LinearMath_Debug.lib;Detour-d.lib;Recast-d.lib;DebugUtils-d.lib;DetourCrowd-d.lib;DetourTileCache-d.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>glew32.lib;glfw3.lib;opengl32.lib;assimp-vc143-mtd.lib;behaviortree_cppd.lib;BulletCollision_Debug.lib;BulletDynamics_Debug.lib;LinearMath_Debug.lib;Detour-d.lib;Recast-d.lib;DebugUtils-d.lib;DetourCrowd-d.lib;DetourTileCache-d.lib;ktx.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
       <Command>xcopy /y "C:\Users\JT\Desktop\glfw-3.3.8.bin.WIN64\lib-vc2022\glfw3.dll" "$(OutDir)"

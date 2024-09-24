@@ -1,8 +1,7 @@
-// Skybox.cpp
 #include "Skybox.h"
 #include <glm/gtc/type_ptr.hpp>
 #include <iostream>
-#include <stb_image.h>
+#include <ktx.h>
 
 const char* skyboxVertexShaderSource = R"(
     #version 430 core
@@ -29,14 +28,25 @@ const char* skyboxFragmentShaderSource = R"(
 
     uniform samplerCube skybox;
 
+    vec3 SRGBToLinear(vec3 srgbColor) {
+        return pow(srgbColor, vec3(0.5));  // Correct gamma conversion
+    }
+
     void main()
     {    
-        FragColor = texture(skybox, TexCoords);
+        vec4 texColor = texture(skybox, TexCoords);
+        vec3 linearColor = SRGBToLinear(texColor.rgb);
+        FragColor = vec4(linearColor, texColor.a);
     }
 )";
 
-Skybox::Skybox(const std::vector<std::string>& faces) : m_isValid(false), m_textureWidth(0), m_textureHeight(0) {
-    cubemapTexture = loadCubemap(faces);
+Skybox::Skybox(const std::string& ktxFilePath) : m_isValid(false), m_textureWidth(0), m_textureHeight(0) {
+    cubemapTexture = loadCubemap(ktxFilePath);
+    if (cubemapTexture == 0) {
+        m_isValid = false;
+        return;
+    }
+
     setupMesh();
 
     // Compile and link shaders
@@ -69,79 +79,46 @@ Skybox::~Skybox() {
     glDeleteProgram(shaderProgram);
 }
 
-void Skybox::draw(const glm::mat4& view, const glm::mat4& projection) {
-    if (!m_isValid) {
-        std::cerr << "Cannot draw invalid Skybox." << std::endl;
-        return;
+unsigned int Skybox::loadCubemap(const std::string& ktxFilePath) {
+    unsigned int textureID = 0;
+    ktxTexture* kTexture;
+    KTX_error_code result = ktxTexture_CreateFromNamedFile(ktxFilePath.c_str(), KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT, &kTexture);
+    if (result != KTX_SUCCESS) {
+        std::cerr << "Failed to load KTX texture: " << ktxFilePath << std::endl;
+        m_lastError = "Failed to load KTX texture";
+        return 0;
     }
 
-    glDepthFunc(GL_LEQUAL);
-    glUseProgram(shaderProgram);
-
-    glm::mat4 skyboxView = glm::mat4(glm::mat3(view)); // Remove translation from the view matrix
-    glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(skyboxView));
-    glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
-
-    glBindVertexArray(VAO);
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture);
-    glDrawArrays(GL_TRIANGLES, 0, 36);
-    glBindVertexArray(0);
-
-    glDepthFunc(GL_LESS);
-    checkGLError("Skybox Draw");
-}
-
-unsigned int Skybox::loadCubemap(const std::vector<std::string>& faces) {
-    unsigned int textureID;
-    glGenTextures(1, &textureID);
-    glBindTexture(GL_TEXTURE_CUBE_MAP, textureID);
-
-    int width, height, nrChannels;
-    for (unsigned int i = 0; i < faces.size(); i++) {
-        unsigned char* data = stbi_load(faces[i].c_str(), &width, &height, &nrChannels, 0);
-        if (data) {
-            GLenum format;
-            GLenum internalFormat;
-            if (nrChannels == 4) {
-                format = GL_RGBA;
-                internalFormat = GL_RGBA8;
-            }
-            else if (nrChannels == 3) {
-                format = GL_RGB;
-                internalFormat = GL_RGB8;
-            }
-            else {
-                std::cerr << "Unexpected number of channels (" << nrChannels
-                    << ") in cubemap texture: " << faces[i] << std::endl;
-                stbi_image_free(data);
-                continue;
-            }
-
-            glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i,
-                0, internalFormat, width, height, 0, format, GL_UNSIGNED_BYTE, data);
-
-            stbi_image_free(data);
-            if (i == 0) {
-                m_textureWidth = width;
-                m_textureHeight = height;
-            }
-        }
-        else {
-            std::cerr << "Cubemap texture failed to load at path: " << faces[i] << std::endl;
-            stbi_image_free(data);
-            m_lastError = "Failed to load texture: " + faces[i];
-            return 0;
-        }
+    // Upload the texture to OpenGL
+    GLenum target;
+    result = ktxTexture_GLUpload(kTexture, &textureID, &target, nullptr);
+    if (result != KTX_SUCCESS) {
+        std::cerr << "Failed to upload KTX texture to OpenGL" << std::endl;
+        m_lastError = "Failed to upload KTX texture to OpenGL";
+        ktxTexture_Destroy(kTexture);
+        return 0;
     }
 
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+    // Ensure the texture is a cubemap
+    if (target != GL_TEXTURE_CUBE_MAP) {
+        std::cerr << "Loaded KTX texture is not a cubemap" << std::endl;
+        m_lastError = "Loaded KTX texture is not a cubemap";
+        ktxTexture_Destroy(kTexture);
+        return 0;
+    }
+
+    // Set texture parameters
+    glBindTexture(target, textureID);
+    glTexParameteri(target, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(target, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(target, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+    glBindTexture(target, 0);
 
     checkGLError("Cubemap Texture Loading");
+
+    ktxTexture_Destroy(kTexture);
     return textureID;
 }
 
@@ -202,10 +179,34 @@ void Skybox::setupMesh() {
     checkGLError("Skybox Mesh Setup");
 }
 
+void Skybox::draw(const glm::mat4& view, const glm::mat4& projection) {
+    if (!m_isValid) {
+        std::cerr << "Cannot draw invalid Skybox." << std::endl;
+        return;
+    }
+
+    glDepthFunc(GL_LEQUAL);
+    glUseProgram(shaderProgram);
+
+    glm::mat4 skyboxView = glm::mat4(glm::mat3(view)); // Remove translation from the view matrix
+    glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(skyboxView));
+    glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+
+    glBindVertexArray(VAO);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture);
+    glUniform1i(glGetUniformLocation(shaderProgram, "skybox"), 0);
+    glDrawArrays(GL_TRIANGLES, 0, 36);
+    glBindVertexArray(0);
+
+    glDepthFunc(GL_LESS);
+    checkGLError("Skybox Draw");
+}
+
 void Skybox::checkGLError(const char* operation) {
     GLenum error;
     while ((error = glGetError()) != GL_NO_ERROR) {
-        std::cerr << "OpenGL error after " << operation << ": " << error << std::endl;
+        std::cerr << "OpenGL error after " << operation << ": " << std::hex << error << std::dec << std::endl;
         m_lastError = std::string(operation) + ": GL error " + std::to_string(error);
     }
 }

@@ -1,15 +1,13 @@
-// Skybox.h
 #pragma once
 
 #include <GL/glew.h>
 #include <glm/glm.hpp>
-#include <vector>
 #include <string>
 #include <iostream>
 
 class Skybox {
 public:
-    Skybox(const std::vector<std::string>& faces);
+    Skybox(const std::string& ktxFilePath);
     ~Skybox();
 
     void draw(const glm::mat4& view, const glm::mat4& projection);
@@ -19,7 +17,7 @@ public:
     bool isValid() const { return m_isValid; }
 
 private:
-    unsigned int loadCubemap(const std::vector<std::string>& faces);
+    unsigned int loadCubemap(const std::string& ktxFilePath);
     void setupMesh();
     void checkGLError(const char* operation);
 

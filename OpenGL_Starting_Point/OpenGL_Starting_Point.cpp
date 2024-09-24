@@ -728,6 +728,10 @@ int main() {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3); // Request OpenGL 4.3 or newer
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+
+    // Request an sRGB-capable framebuffer
+    //glfwWindowHint(GLFW_SRGB_CAPABLE, GLFW_TRUE);
+
     GLFWwindow* window = glfwCreateWindow(WIDTH, HEIGHT, "OpenGL Basic Application", nullptr, nullptr);
     if (!window) {
         std::cerr << "Failed to create GLFW window" << std::endl;
@@ -763,20 +767,18 @@ int main() {
 
     glEnable(GL_DEPTH_TEST);
 
-    std::vector<std::string> Skyboxfaces{
-    FileSystemUtils::getAssetFilePath("textures/cubemaps/right.tga"),
-    FileSystemUtils::getAssetFilePath("textures/cubemaps/left.tga"),
-    FileSystemUtils::getAssetFilePath("textures/cubemaps/top.tga"),
-    FileSystemUtils::getAssetFilePath("textures/cubemaps/bottom.tga"),
-    FileSystemUtils::getAssetFilePath("textures/cubemaps/front.tga"),
-    FileSystemUtils::getAssetFilePath("textures/cubemaps/back.tga")
-    };
+    // Enable sRGB framebuffer gamma correction
+    //glEnable(GL_FRAMEBUFFER_SRGB);
 
-    Skybox skybox(Skyboxfaces);
+
+    // Create Skybox using KTX2 file
+    Skybox skybox(FileSystemUtils::getAssetFilePath("textures/cubemaps/night_sky.ktx2"));
 
     if (!skybox.isValid()) {
         std::cerr << "Skybox initialization failed!" << std::endl;
     }
+
+    skybox.printDebugInfo();
 
     // Load the model
     std::vector<Mesh> meshes = loadModel(FileSystemUtils::getAssetFilePath("models/test_plane.obj"));
