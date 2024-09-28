@@ -1022,10 +1022,10 @@ int main() {
 
         // Set fog uniforms
         glUniform3fv(glGetUniformLocation(shaderProgram, "cameraPos"), 1, glm::value_ptr(camera.getPosition()));
-        glUniform3f(glGetUniformLocation(shaderProgram, "fogColor"), 0.4f, 0.4f, 0.4f);
-        glUniform1f(glGetUniformLocation(shaderProgram, "fogDensity"), 0.1f); // Less dense fog
-        glUniform1f(glGetUniformLocation(shaderProgram, "fogStartHeight"), 0.0f); // Start fog below ground level
-        glUniform1f(glGetUniformLocation(shaderProgram, "fogHeightFalloff"), 5.0f); // Adjust vertical distribution
+        glUniform3f(glGetUniformLocation(shaderProgram, "fogColor"), 0.3f, 0.3f, 0.6f);
+        glUniform1f(glGetUniformLocation(shaderProgram, "fogDensity"), 0.05f); // Less dense fog
+        glUniform1f(glGetUniformLocation(shaderProgram, "fogStartHeight"), -5.0f); // Start fog below ground level
+        glUniform1f(glGetUniformLocation(shaderProgram, "fogHeightFalloff"), 50.0f); // Adjust vertical distribution
 
         for (const auto& mesh : meshes) {
             glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, 0.0f));
