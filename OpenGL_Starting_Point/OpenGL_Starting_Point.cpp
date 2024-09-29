@@ -1,3 +1,6 @@
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 #include <vector>
@@ -65,8 +68,8 @@ const char* fragmentShaderSource = R"(
 
     void main()
     {
-        // Output a simple solid red color
-        FragColor = vec4(0.8, 0.8, 0.8, 1.0);
+        // Output a simple solid color
+        FragColor = vec4(0.5, 0.5, 0.5, 1.0);
     }
 )";
 
@@ -88,16 +91,19 @@ const char* quadFragmentShaderSource = R"(
     out vec4 FragColor;
     in vec2 TexCoords;
 
-    uniform sampler2D colorMap;   // The color buffer
-    uniform sampler2D depthMap;   // The depth buffer for fog
+    uniform sampler2D colorMap;       // The color buffer
+    uniform sampler2D depthMap;       // The depth buffer for fog
+    uniform sampler2D noiseTexture;   // The noise texture
+
     uniform vec3 fogColor;
     uniform float near;
     uniform float far;
     uniform float fogStart;
     uniform float fogEnd;
+    uniform float time;               // Time for animated fog
 
     float LinearizeDepth(float depth) {
-        float z = depth * 2.0 - 1.0; // Back to NDC
+        float z = depth * 2.0 - 1.0;  // Back to NDC
         return (2.0 * near * far) / (far + near - z * (far - near));
     }
 
@@ -112,9 +118,20 @@ const char* quadFragmentShaderSource = R"(
     
         // Linearize the depth value and calculate fog factor
         float linearDepth = LinearizeDepth(depth); 
+
         float fogFactor = CalculateFogFactor(linearDepth);
 
-        // Blend scene color with fog color based on depth
+        // Adjust noise texture coordinates to reduce tiling
+        vec2 noiseCoords = vec2(TexCoords.x * 0.02, TexCoords.y * 0.02);  // Smaller scale for the noise
+        noiseCoords += vec2(0.1 * time, 0.1 * time); // Animate the noise over time
+
+        // Sample the noise texture and modulate fog factor
+        float noise = texture(noiseTexture, noiseCoords).r;
+
+        // Blend the fog factor with noise, using a subtle influence of the noise
+        fogFactor *= (0.95 + 0.05 * noise);  // Smaller influence of noise for smoother fog
+
+        // Blend scene color with fog color based on the fog factor
         vec3 finalColor = mix(fogColor, sceneColor, fogFactor);
     
         FragColor = vec4(finalColor, 1.0);
@@ -298,7 +315,7 @@ int main() {
     glEnable(GL_DEPTH_TEST);
 
     // Load the model
-    std::vector<Mesh> meshes = loadModel(FileSystemUtils::getAssetFilePath("models/nav_test2.obj"));
+    std::vector<Mesh> meshes = loadModel(FileSystemUtils::getAssetFilePath("models/nav_test_tutorial_map.obj"));
 
     // Build and compile the shader program
     // Vertex Shader
@@ -413,6 +430,24 @@ int main() {
 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
+    GLuint noiseTexture;
+    glGenTextures(1, &noiseTexture);
+    glBindTexture(GL_TEXTURE_2D, noiseTexture);
+    // Load noise texture data here (this example assumes you have a function to load the image)
+    int noiseWidth, noiseHeight, noiseChannels;
+    unsigned char* noiseData = stbi_load(FileSystemUtils::getAssetFilePath("textures/noise.png").c_str(), &noiseWidth, &noiseHeight, &noiseChannels, 1); // Load as 1 channel (grayscale)
+
+    if (noiseData) {
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, noiseWidth, noiseHeight, 0, GL_RED, GL_UNSIGNED_BYTE, noiseData);
+        glGenerateMipmap(GL_TEXTURE_2D);
+    }
+    stbi_image_free(noiseData);
+
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+
     // Set up the quad VAO
     GLuint quadVAO, quadVBO;
     float quadVertices[] = {
@@ -487,10 +522,14 @@ int main() {
         // Render the quad with the fog effect
         glUseProgram(quadShaderProgram);
 
+        // Get current time and pass it to the shader
+        float timeValue = glfwGetTime();
+        glUniform1f(glGetUniformLocation(quadShaderProgram, "time"), timeValue);
+
         // Set fog parameters
         glm::vec3 fogColor(0.3f, 0.3f, 0.6f); // Fog color
-        float fogStart = 1.0f; // Fog starts at this distance
-        float fogEnd = 50.0f;  // Fog fully applied at this distance
+        float fogStart = 0.25f; // Fog starts at this distance
+        float fogEnd = 20.0f;  // Fog fully applied at this distance
         glUniform3fv(glGetUniformLocation(quadShaderProgram, "fogColor"), 1, glm::value_ptr(fogColor));
         glUniform1f(glGetUniformLocation(quadShaderProgram, "fogStart"), fogStart);
         glUniform1f(glGetUniformLocation(quadShaderProgram, "fogEnd"), fogEnd);
@@ -507,6 +546,11 @@ int main() {
         glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, depthMap);
         glUniform1i(glGetUniformLocation(quadShaderProgram, "depthMap"), 1);
+
+        // Bind the noise texture
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, noiseTexture);
+        glUniform1i(glGetUniformLocation(quadShaderProgram, "noiseTexture"), 2);
 
         // Draw the quad
         glBindVertexArray(quadVAO);
