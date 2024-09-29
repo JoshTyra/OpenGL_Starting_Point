@@ -11,6 +11,20 @@
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
 
+void APIENTRY MessageCallback(GLenum source,
+    GLenum type,
+    GLuint id,
+    GLenum severity,
+    GLsizei length,
+    const GLchar* message,
+    const void* userParam)
+{
+    std::cerr << "GL CALLBACK: " << (type == GL_DEBUG_TYPE_ERROR ? "** GL ERROR **" : "")
+        << " type = " << type
+        << ", severity = " << severity
+        << ", message = " << message << std::endl;
+}
+
 // Constants and global variables
 const int WIDTH = 2560;
 const int HEIGHT = 1080;
@@ -26,48 +40,69 @@ Camera camera(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), -180.0f,
 
 // Vertex Shader source code
 const char* vertexShaderSource = R"(
-#version 330 core
-layout (location = 0) in vec3 aPos;
-layout (location = 1) in vec3 aNormal;
-layout (location = 2) in vec2 aTexCoords;
+    #version 330 core
+    layout (location = 0) in vec3 aPos;
+    layout (location = 1) in vec3 aNormal;
+    layout (location = 2) in vec2 aTexCoords;
 
-out vec3 FragPos;
-out vec3 Normal;
-out vec2 TexCoords;
+    out vec3 FragPos;
 
-uniform mat4 model;
-uniform mat4 view;
-uniform mat4 projection;
+    uniform mat4 model;
+    uniform mat4 view;
+    uniform mat4 projection;
 
-void main()
-{
-    FragPos = vec3(model * vec4(aPos, 1.0));
-    Normal = mat3(transpose(inverse(model))) * aNormal;  
-    TexCoords = aTexCoords;
-    
-    gl_Position = projection * view * vec4(FragPos, 1.0);
-}
+    void main()
+    {
+        FragPos = vec3(model * vec4(aPos, 1.0));    
+        gl_Position = projection * view * vec4(FragPos, 1.0);
+    }
 )";
 
 // Fragment Shader source code
 const char* fragmentShaderSource = R"(
-#version 330 core
-out vec4 FragColor;
+    #version 330 core
+    out vec4 FragColor;
 
-in vec3 FragPos;
-in vec3 Normal;
-in vec2 TexCoords;
+    void main()
+    {
+        // Output a simple solid red color
+        FragColor = vec4(1.0, 0.0, 0.0, 1.0); // Red color
+    }
+)";
 
-void main()
-{
-    vec3 norm = normalize(Normal);
-    vec3 lightDir = normalize(vec3(1.0, 1.0, 1.0));  // Directional light coming from top-right
-    float diff = max(dot(norm, lightDir), 0.0);
-    vec3 diffuse = diff * vec3(1.0, 1.0, 1.0);  // White light
-    vec3 ambient = 0.1 * vec3(1.0, 1.0, 1.0);  // Ambient light
-    
-    FragColor = vec4(ambient + diffuse, 1.0);
-}
+const char* quadVertexShaderSource = R"(
+    #version 330 core
+    layout (location = 0) in vec2 aPos;
+    layout (location = 1) in vec2 aTexCoords;
+
+    out vec2 TexCoords;
+
+    void main() {
+        TexCoords = aTexCoords;
+        gl_Position = vec4(aPos.x, aPos.y, 0.0, 1.0);
+    }
+)";
+
+const char* quadFragmentShaderSource = R"(
+    #version 330 core
+    out vec4 FragColor;
+    in vec2 TexCoords;
+
+    uniform sampler2D depthMap;
+
+    float near = 0.1;
+    float far  = 5000.0;
+
+    float LinearizeDepth(float depth) {
+        float z = depth * 2.0 - 1.0; // back to NDC 
+        return (2.0 * near * far) / (far + near - z * (far - near));	
+    }
+
+    void main() {
+        float depth = texture(depthMap, TexCoords).r;
+        float linearDepth = LinearizeDepth(depth) / far; // divide by far for visualization
+        FragColor = vec4(vec3(linearDepth), 1.0);
+    }
 )";
 
 void processInput(GLFWwindow* window) {
@@ -208,8 +243,9 @@ int main() {
 
     // Create a GLFW window
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 4);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3); // Request OpenGL 4.3 or newer
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+
     GLFWwindow* window = glfwCreateWindow(WIDTH, HEIGHT, "OpenGL Basic Application", nullptr, nullptr);
     if (!window) {
         std::cerr << "Failed to create GLFW window" << std::endl;
@@ -228,6 +264,17 @@ int main() {
         std::cerr << "Failed to initialize GLEW" << std::endl;
         return -1;
     }
+
+    // Clear any GLEW errors
+    glGetError(); // Clear error flag set by GLEW
+
+    // Enable OpenGL debugging if supported
+    glEnable(GL_DEBUG_OUTPUT);
+    glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+    glDebugMessageCallback(MessageCallback, nullptr);
+
+    // Optionally filter which types of messages you want to log
+    glDebugMessageControl(GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, nullptr, GL_TRUE);
 
     // Define the viewport dimensions
     glViewport(0, 0, WIDTH, HEIGHT);
@@ -279,6 +326,92 @@ int main() {
     glDeleteShader(vertexShader);
     glDeleteShader(fragmentShader);
 
+    // Quad Vertex Shader
+    GLuint quadVertexShader = glCreateShader(GL_VERTEX_SHADER);
+    glShaderSource(quadVertexShader, 1, &quadVertexShaderSource, NULL); // Using quadVertexShaderSource from before
+    glCompileShader(quadVertexShader);
+
+    // Check for vertex shader compile errors
+    glGetShaderiv(quadVertexShader, GL_COMPILE_STATUS, &success);
+    if (!success) {
+        glGetShaderInfoLog(quadVertexShader, 512, NULL, infoLog);
+        std::cerr << "ERROR::QUAD_SHADER::VERTEX::COMPILATION_FAILED\n" << infoLog << std::endl;
+    }
+
+    // Quad Fragment Shader
+    GLuint quadFragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(quadFragmentShader, 1, &quadFragmentShaderSource, NULL); // Using quadFragmentShaderSource from before
+    glCompileShader(quadFragmentShader);
+
+    // Check for fragment shader compile errors
+    glGetShaderiv(quadFragmentShader, GL_COMPILE_STATUS, &success);
+    if (!success) {
+        glGetShaderInfoLog(quadFragmentShader, 512, NULL, infoLog);
+        std::cerr << "ERROR::QUAD_SHADER::FRAGMENT::COMPILATION_FAILED\n" << infoLog << std::endl;
+    }
+
+    // Link the quad shaders into a shader program
+    GLuint quadShaderProgram = glCreateProgram();
+    glAttachShader(quadShaderProgram, quadVertexShader);
+    glAttachShader(quadShaderProgram, quadFragmentShader);
+    glLinkProgram(quadShaderProgram);
+
+    // Check for linking errors
+    glGetProgramiv(quadShaderProgram, GL_LINK_STATUS, &success);
+    if (!success) {
+        glGetProgramInfoLog(quadShaderProgram, 512, NULL, infoLog);
+        std::cerr << "ERROR::QUAD_SHADER::PROGRAM::LINKING_FAILED\n" << infoLog << std::endl;
+    }
+
+    // Clean up shaders as they are no longer necessary after linking
+    glDeleteShader(quadVertexShader);
+    glDeleteShader(quadFragmentShader);
+
+    GLuint depthFBO;
+    glGenFramebuffers(1, &depthFBO);
+    glBindFramebuffer(GL_FRAMEBUFFER, depthFBO);
+
+    // Create a texture for the depth attachment
+    GLuint depthMap;
+    glGenTextures(1, &depthMap);
+    glBindTexture(GL_TEXTURE_2D, depthMap);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, WIDTH, HEIGHT, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthMap, 0);
+
+    glDrawBuffer(GL_NONE);
+    glReadBuffer(GL_NONE);
+
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+        std::cerr << "Framebuffer is not complete!" << std::endl;
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    // Set up the quad VAO
+    GLuint quadVAO, quadVBO;
+    float quadVertices[] = {
+        // positions   // texCoords
+        -1.0f,  1.0f,  0.0f, 1.0f,
+        -1.0f, -1.0f,  0.0f, 0.0f,
+         1.0f, -1.0f,  1.0f, 0.0f,
+
+        -1.0f,  1.0f,  0.0f, 1.0f,
+         1.0f, -1.0f,  1.0f, 0.0f,
+         1.0f,  1.0f,  1.0f, 1.0f
+    };
+    glGenVertexArrays(1, &quadVAO);
+    glGenBuffers(1, &quadVBO);
+    glBindVertexArray(quadVAO);
+    glBindBuffer(GL_ARRAY_BUFFER, quadVBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(quadVertices), &quadVertices, GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
+
     // Render loop
     while (!glfwWindowShouldClose(window)) {
         float currentFrame = static_cast<float>(glfwGetTime());
@@ -296,6 +429,7 @@ int main() {
             glfwSetWindowShouldClose(window, true);
 
         // Render
+        glBindFramebuffer(GL_FRAMEBUFFER, depthFBO);
         glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -319,6 +453,22 @@ int main() {
             glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
             mesh.Draw(shaderProgram);
         }
+
+        // Unbind the framebuffer
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+        // Clear the screen and disable depth test for rendering the quad
+        glClear(GL_COLOR_BUFFER_BIT);
+        glDisable(GL_DEPTH_TEST);
+
+        // Render quad
+        glUseProgram(quadShaderProgram);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, depthMap);
+        glBindVertexArray(quadVAO);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+
+        glEnable(GL_DEPTH_TEST);
 
         // Swap buffers and poll IO events
         glfwSwapBuffers(window);
