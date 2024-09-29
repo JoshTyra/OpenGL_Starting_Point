@@ -173,7 +173,8 @@ void scrollCallback(GLFWwindow* window, double xoffset, double yoffset) {
     camera.processMouseScroll(static_cast<float>(yoffset));
 }
 
-GLuint loadTexture(const char* path);
+// Utility function to load textures using stb_image or similar
+GLuint loadTextureFromFile(const char* path, const std::string& directory);
 
 struct Vertex {
     glm::vec3 Position;
@@ -185,9 +186,10 @@ struct Mesh {
     std::vector<Vertex> vertices;
     std::vector<unsigned int> indices;
     mutable unsigned int VAO;  // Mark as mutable to allow modification in const functions
+    GLuint diffuseTexture;  // Store diffuse texture ID
 
-    Mesh(std::vector<Vertex> vertices, std::vector<unsigned int> indices)
-        : vertices(vertices), indices(indices) {
+    Mesh(std::vector<Vertex> vertices, std::vector<unsigned int> indices, GLuint diffuseTexture)
+        : vertices(vertices), indices(indices), diffuseTexture(diffuseTexture) {
         setupMesh();
     }
 
@@ -218,8 +220,6 @@ struct Mesh {
         glBindVertexArray(0);
     }
 
-    GLuint diffuseTexture = loadTexture(FileSystemUtils::getAssetFilePath("textures/example_tutorial_ground.tga").c_str());
-
     void Draw(GLuint shaderProgram) const {
         // Bind diffuse texture
         glActiveTexture(GL_TEXTURE0);
@@ -239,7 +239,7 @@ std::vector<Mesh> loadModel(const std::string& path) {
     const aiScene* scene = importer.ReadFile(path, aiProcess_Triangulate | aiProcess_FlipUVs);
 
     if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode) {
-        std::cout << "ERROR::ASSIMP::" << importer.GetErrorString() << std::endl;
+        std::cerr << "ERROR::ASSIMP::" << importer.GetErrorString() << std::endl;
         return {};
     }
 
@@ -250,6 +250,7 @@ std::vector<Mesh> loadModel(const std::string& path) {
         std::vector<Vertex> vertices;
         std::vector<unsigned int> indices;
 
+        // Process vertices and indices (already done in your code)
         for (unsigned int j = 0; j < mesh->mNumVertices; j++) {
             Vertex vertex;
             vertex.Position = glm::vec3(mesh->mVertices[j].x, mesh->mVertices[j].y, mesh->mVertices[j].z);
@@ -272,13 +273,26 @@ std::vector<Mesh> loadModel(const std::string& path) {
             }
         }
 
-        meshes.push_back(Mesh(vertices, indices));
+        // Load materials
+        aiMaterial* material = scene->mMaterials[mesh->mMaterialIndex];
+        GLuint diffuseTexture = 0;
+
+        if (material->GetTextureCount(aiTextureType_DIFFUSE) > 0) {
+            aiString str;
+            material->GetTexture(aiTextureType_DIFFUSE, 0, &str);
+
+            // Use the texture path directly
+            std::string texturePath = FileSystemUtils::getAssetFilePath(std::string(str.C_Str()));
+            diffuseTexture = loadTextureFromFile(texturePath.c_str(), "");
+        }
+
+        meshes.push_back(Mesh(vertices, indices, diffuseTexture));
     }
 
     return meshes;
 }
 
-GLuint loadTexture(const char* path) {
+GLuint loadTextureFromFile(const char* path, const std::string&) {
     GLuint textureID;
     glGenTextures(1, &textureID);
 
@@ -305,7 +319,7 @@ GLuint loadTexture(const char* path) {
         stbi_image_free(data);
     }
     else {
-        std::cerr << "Failed to load texture: " << path << std::endl;
+        std::cerr << "Texture failed to load at path: " << path << std::endl;
         stbi_image_free(data);
     }
 
@@ -360,7 +374,7 @@ int main() {
     glEnable(GL_DEPTH_TEST);
 
     // Load the model
-    std::vector<Mesh> meshes = loadModel(FileSystemUtils::getAssetFilePath("models/nav_test_tutorial_map.obj"));
+    std::vector<Mesh> meshes = loadModel(FileSystemUtils::getAssetFilePath("models/tutorial_map.obj"));
 
     // Build and compile the shader program
     // Vertex Shader
