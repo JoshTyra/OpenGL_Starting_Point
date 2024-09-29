@@ -48,16 +48,15 @@ const char* vertexShaderSource = R"(
     layout (location = 1) in vec3 aNormal;
     layout (location = 2) in vec2 aTexCoords;
 
-    out vec3 FragPos;
+    out vec2 TexCoords;  // Pass to fragment shader
 
     uniform mat4 model;
     uniform mat4 view;
     uniform mat4 projection;
 
-    void main()
-    {
-        FragPos = vec3(model * vec4(aPos, 1.0));    
-        gl_Position = projection * view * vec4(FragPos, 1.0);
+    void main() {
+        TexCoords = aTexCoords;
+        gl_Position = projection * view * model * vec4(aPos, 1.0);
     }
 )";
 
@@ -66,10 +65,12 @@ const char* fragmentShaderSource = R"(
     #version 330 core
     out vec4 FragColor;
 
-    void main()
-    {
-        // Output a simple solid color
-        FragColor = vec4(0.5, 0.5, 0.5, 1.0);
+    in vec2 TexCoords;
+
+    uniform sampler2D diffuseTexture;
+
+    void main() {
+        FragColor = texture(diffuseTexture, TexCoords);
     }
 )";
 
@@ -172,6 +173,8 @@ void scrollCallback(GLFWwindow* window, double xoffset, double yoffset) {
     camera.processMouseScroll(static_cast<float>(yoffset));
 }
 
+GLuint loadTexture(const char* path);
+
 struct Vertex {
     glm::vec3 Position;
     glm::vec3 Normal;
@@ -215,7 +218,15 @@ struct Mesh {
         glBindVertexArray(0);
     }
 
-    void Draw(GLuint shaderProgram) const {  // Mark as const
+    GLuint diffuseTexture = loadTexture(FileSystemUtils::getAssetFilePath("textures/example_tutorial_ground.tga").c_str());
+
+    void Draw(GLuint shaderProgram) const {
+        // Bind diffuse texture
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, diffuseTexture);
+        glUniform1i(glGetUniformLocation(shaderProgram, "diffuseTexture"), 0);
+
+        // Continue with binding VAO and drawing the mesh
         glUseProgram(shaderProgram);
         glBindVertexArray(VAO);
         glDrawElements(GL_TRIANGLES, indices.size(), GL_UNSIGNED_INT, 0);
@@ -265,6 +276,40 @@ std::vector<Mesh> loadModel(const std::string& path) {
     }
 
     return meshes;
+}
+
+GLuint loadTexture(const char* path) {
+    GLuint textureID;
+    glGenTextures(1, &textureID);
+
+    int width, height, nrComponents;
+    unsigned char* data = stbi_load(path, &width, &height, &nrComponents, 0);
+    if (data) {
+        GLenum format;
+        if (nrComponents == 1)
+            format = GL_RED;
+        else if (nrComponents == 3)
+            format = GL_RGB;
+        else if (nrComponents == 4)
+            format = GL_RGBA;
+
+        glBindTexture(GL_TEXTURE_2D, textureID);
+        glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
+        glGenerateMipmap(GL_TEXTURE_2D);
+
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+        stbi_image_free(data);
+    }
+    else {
+        std::cerr << "Failed to load texture: " << path << std::endl;
+        stbi_image_free(data);
+    }
+
+    return textureID;
 }
 
 int main() {
