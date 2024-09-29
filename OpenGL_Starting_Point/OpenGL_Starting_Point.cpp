@@ -66,7 +66,7 @@ const char* fragmentShaderSource = R"(
     void main()
     {
         // Output a simple solid red color
-        FragColor = vec4(1.0, 0.0, 0.0, 1.0); // Red color
+        FragColor = vec4(0.8, 0.8, 0.8, 1.0);
     }
 )";
 
@@ -88,20 +88,36 @@ const char* quadFragmentShaderSource = R"(
     out vec4 FragColor;
     in vec2 TexCoords;
 
-    uniform sampler2D depthMap;
-
-    float near = 0.1;
-    float far  = 5000.0;
+    uniform sampler2D colorMap;   // The color buffer
+    uniform sampler2D depthMap;   // The depth buffer for fog
+    uniform vec3 fogColor;
+    uniform float near;
+    uniform float far;
+    uniform float fogStart;
+    uniform float fogEnd;
 
     float LinearizeDepth(float depth) {
-        float z = depth * 2.0 - 1.0; // back to NDC 
-        return (2.0 * near * far) / (far + near - z * (far - near));	
+        float z = depth * 2.0 - 1.0; // Back to NDC
+        return (2.0 * near * far) / (far + near - z * (far - near));
+    }
+
+    float CalculateFogFactor(float depth) {
+        return clamp((fogEnd - depth) / (fogEnd - fogStart), 0.0, 1.0);
     }
 
     void main() {
+        // Sample color and depth from textures
+        vec3 sceneColor = texture(colorMap, TexCoords).rgb;
         float depth = texture(depthMap, TexCoords).r;
-        float linearDepth = LinearizeDepth(depth) / far; // divide by far for visualization
-        FragColor = vec4(vec3(linearDepth), 1.0);
+    
+        // Linearize the depth value and calculate fog factor
+        float linearDepth = LinearizeDepth(depth); 
+        float fogFactor = CalculateFogFactor(linearDepth);
+
+        // Blend scene color with fog color based on depth
+        vec3 finalColor = mix(fogColor, sceneColor, fogFactor);
+    
+        FragColor = vec4(finalColor, 1.0);
     }
 )";
 
@@ -367,23 +383,30 @@ int main() {
     glDeleteShader(quadVertexShader);
     glDeleteShader(quadFragmentShader);
 
-    GLuint depthFBO;
-    glGenFramebuffers(1, &depthFBO);
-    glBindFramebuffer(GL_FRAMEBUFFER, depthFBO);
+    // Create a framebuffer for rendering scene
+    GLuint sceneFBO;
+    glGenFramebuffers(1, &sceneFBO);
+    glBindFramebuffer(GL_FRAMEBUFFER, sceneFBO);
 
-    // Create a texture for the depth attachment
+    // Create a texture for the color attachment
+    GLuint colorMap;
+    glGenTextures(1, &colorMap);
+    glBindTexture(GL_TEXTURE_2D, colorMap);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, WIDTH, HEIGHT, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, colorMap, 0);
+
+    // Depth buffer
     GLuint depthMap;
     glGenTextures(1, &depthMap);
     glBindTexture(GL_TEXTURE_2D, depthMap);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, WIDTH, HEIGHT, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthMap, 0);
-
-    glDrawBuffer(GL_NONE);
-    glReadBuffer(GL_NONE);
 
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
         std::cerr << "Framebuffer is not complete!" << std::endl;
@@ -429,7 +452,7 @@ int main() {
             glfwSetWindowShouldClose(window, true);
 
         // Render
-        glBindFramebuffer(GL_FRAMEBUFFER, depthFBO);
+        glBindFramebuffer(GL_FRAMEBUFFER, sceneFBO);
         glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -457,14 +480,35 @@ int main() {
         // Unbind the framebuffer
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
-        // Clear the screen and disable depth test for rendering the quad
+        // Clear the screen and disable depth test for the quad
         glClear(GL_COLOR_BUFFER_BIT);
         glDisable(GL_DEPTH_TEST);
 
-        // Render quad
+        // Render the quad with the fog effect
         glUseProgram(quadShaderProgram);
+
+        // Set fog parameters
+        glm::vec3 fogColor(0.3f, 0.3f, 0.6f); // Fog color
+        float fogStart = 1.0f; // Fog starts at this distance
+        float fogEnd = 50.0f;  // Fog fully applied at this distance
+        glUniform3fv(glGetUniformLocation(quadShaderProgram, "fogColor"), 1, glm::value_ptr(fogColor));
+        glUniform1f(glGetUniformLocation(quadShaderProgram, "fogStart"), fogStart);
+        glUniform1f(glGetUniformLocation(quadShaderProgram, "fogEnd"), fogEnd);
+
+        // Set near and far planes
+        glUniform1f(glGetUniformLocation(quadShaderProgram, "near"), 0.1f);
+        glUniform1f(glGetUniformLocation(quadShaderProgram, "far"), 5000.0f);
+
+        // Bind textures for the color and depth maps
         glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, colorMap);
+        glUniform1i(glGetUniformLocation(quadShaderProgram, "colorMap"), 0);
+
+        glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, depthMap);
+        glUniform1i(glGetUniformLocation(quadShaderProgram, "depthMap"), 1);
+
+        // Draw the quad
         glBindVertexArray(quadVAO);
         glDrawArrays(GL_TRIANGLES, 0, 6);
 
