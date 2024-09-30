@@ -580,7 +580,7 @@ int main() {
         glm::vec3 fogColor(0.33725490196078434f, 0.34901960784313724f, 0.43529411764705883f); // Fog color
         float fogStart = 1.0f; // Fog starts at this distance
         float fogEnd = 20.0f;  // Fog fully applied at this distance
-        float fogDensity = 0.15f;
+        float fogDensity = 0.12f;
         glUniform3fv(glGetUniformLocation(quadShaderProgram, "fogColor"), 1, glm::value_ptr(fogColor));
         glUniform1f(glGetUniformLocation(quadShaderProgram, "fogDensity"), fogDensity);
         glUniform1f(glGetUniformLocation(quadShaderProgram, "fogStart"), fogStart);
