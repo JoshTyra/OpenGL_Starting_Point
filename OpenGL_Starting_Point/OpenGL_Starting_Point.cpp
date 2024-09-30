@@ -94,22 +94,22 @@ const char* quadFragmentShaderSource = R"(
 
     uniform sampler2D colorMap;       // The color buffer
     uniform sampler2D depthMap;       // The depth buffer for fog
-    uniform sampler2D noiseTexture;   // The noise texture
 
     uniform vec3 fogColor;
     uniform float near;
     uniform float far;
+    uniform float fogDensity;         // Control for fog thickness
     uniform float fogStart;
     uniform float fogEnd;
-    uniform float time;               // Time for animated fog
 
     float LinearizeDepth(float depth) {
         float z = depth * 2.0 - 1.0;  // Back to NDC
         return (2.0 * near * far) / (far + near - z * (far - near));
     }
 
-    float CalculateFogFactor(float depth) {
-        return clamp((fogEnd - depth) / (fogEnd - fogStart), 0.0, 1.0);
+    float CalculateExponentialFogFactor(float depth) {
+        float fogFactor = exp(-depth * fogDensity); // Exponential decay based on depth
+        return clamp(fogFactor, 0.0, 1.0);         // Ensure values are between 0 and 1
     }
 
     void main() {
@@ -120,19 +120,10 @@ const char* quadFragmentShaderSource = R"(
         // Linearize the depth value and calculate fog factor
         float linearDepth = LinearizeDepth(depth); 
 
-        float fogFactor = CalculateFogFactor(linearDepth);
+        // Exponential fog factor for smoother, more gradual fog
+        float fogFactor = CalculateExponentialFogFactor(linearDepth);
 
-        // Adjust noise texture coordinates to reduce tiling
-        vec2 noiseCoords = vec2(TexCoords.x * 0.02, TexCoords.y * 0.02);  // Smaller scale for the noise
-        noiseCoords += vec2(0.1 * time, 0.1 * time); // Animate the noise over time
-
-        // Sample the noise texture and modulate fog factor
-        float noise = texture(noiseTexture, noiseCoords).r;
-
-        // Blend the fog factor with noise, using a subtle influence of the noise
-        fogFactor *= (0.95 + 0.05 * noise);  // Smaller influence of noise for smoother fog
-
-        // Blend scene color with fog color based on the fog factor
+        // Blend scene color with fog color based on fog factor
         vec3 finalColor = mix(fogColor, sceneColor, fogFactor);
     
         FragColor = vec4(finalColor, 1.0);
@@ -587,9 +578,11 @@ int main() {
 
         // Set fog parameters
         glm::vec3 fogColor(0.33725490196078434f, 0.34901960784313724f, 0.43529411764705883f); // Fog color
-        float fogStart = 0.25f; // Fog starts at this distance
+        float fogStart = 1.0f; // Fog starts at this distance
         float fogEnd = 20.0f;  // Fog fully applied at this distance
+        float fogDensity = 0.15f;
         glUniform3fv(glGetUniformLocation(quadShaderProgram, "fogColor"), 1, glm::value_ptr(fogColor));
+        glUniform1f(glGetUniformLocation(quadShaderProgram, "fogDensity"), fogDensity);
         glUniform1f(glGetUniformLocation(quadShaderProgram, "fogStart"), fogStart);
         glUniform1f(glGetUniformLocation(quadShaderProgram, "fogEnd"), fogEnd);
 
