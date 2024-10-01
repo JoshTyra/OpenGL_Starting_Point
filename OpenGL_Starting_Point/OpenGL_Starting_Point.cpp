@@ -88,19 +88,21 @@ const char* quadVertexShaderSource = R"(
 )";
 
 const char* quadFragmentShaderSource = R"(
-    #version 330 core
+    #version 430 core
     out vec4 FragColor;
     in vec2 TexCoords;
 
-    uniform sampler2D colorMap;       // The color buffer
-    uniform sampler2D depthMap;       // The depth buffer for fog
+    uniform sampler2D colorMap;      // The color buffer (final scene color)
+    uniform sampler2D normalMap;     // The world-space normal buffer
+    uniform sampler2D depthMap;      // The depth buffer
+    uniform int debugMode;           // Debug mode to switch between different G-buffer outputs
 
-    uniform vec3 fogColor;
-    uniform float near;
-    uniform float far;
-    uniform float fogDensity;         // Control for fog thickness
-    uniform float fogStart;
-    uniform float fogEnd;
+    uniform vec3 fogColor;           // Fog color
+    uniform float near;              // Near plane
+    uniform float far;               // Far plane
+    uniform float fogDensity;        // Fog density for exponential fog
+    uniform float fogStart;          // Start distance for fog
+    uniform float fogEnd;            // End distance for fog
 
     float LinearizeDepth(float depth) {
         float z = depth * 2.0 - 1.0;  // Back to NDC
@@ -113,20 +115,68 @@ const char* quadFragmentShaderSource = R"(
     }
 
     void main() {
-        // Sample color and depth from textures
-        vec3 sceneColor = texture(colorMap, TexCoords).rgb;
-        float depth = texture(depthMap, TexCoords).r;
+       if (debugMode == 0) {
+            // Sample color and depth from textures
+            vec3 sceneColor = texture(colorMap, TexCoords).rgb;
+            float depth = texture(depthMap, TexCoords).r;
     
-        // Linearize the depth value and calculate fog factor
-        float linearDepth = LinearizeDepth(depth); 
+            // Linearize the depth value and calculate fog factor
+            float linearDepth = LinearizeDepth(depth); 
 
-        // Exponential fog factor for smoother, more gradual fog
-        float fogFactor = CalculateExponentialFogFactor(linearDepth);
+            // Exponential fog factor for smoother, more gradual fog
+            float fogFactor = CalculateExponentialFogFactor(linearDepth);
 
-        // Blend scene color with fog color based on fog factor
-        vec3 finalColor = mix(fogColor, sceneColor, fogFactor);
+            // Blend scene color with fog color based on fog factor
+            vec3 finalColor = mix(fogColor, sceneColor, fogFactor);
     
-        FragColor = vec4(finalColor, 1.0);
+            FragColor = vec4(finalColor, 1.0);
+        } else if (debugMode == 1) {
+            // Display the world-space normal buffer
+            vec3 normal = texture(normalMap, TexCoords).rgb;
+            FragColor = vec4(normal * 0.5 + 0.5, 1.0);  // Map normals from [-1, 1] to [0, 1] for display
+        } else if (debugMode == 2) {
+            float depth = texture(depthMap, TexCoords).r;
+            float linearDepth = LinearizeDepth(depth);
+
+            // Apply logarithmic scaling
+            float depthValue = log2(linearDepth - near + 1.0) / log2(far - near + 1.0);
+
+            // Clamp depthValue to [0, 1] to avoid artifacts
+            depthValue = clamp(depthValue, 0.0, 1.0);
+
+            FragColor = vec4(vec3(depthValue), 1.0);
+        }
+    }
+)";
+
+const char* worldspaceNormalsVertexShaderSource = R"(
+    #version 430 core
+    layout (location = 0) in vec3 aPos;
+    layout (location = 1) in vec3 aNormal;
+
+    out vec3 FragPos;    // Pass world position to fragment shader
+    out vec3 Normal;     // Pass world normal to fragment shader
+
+    uniform mat4 model;
+    uniform mat4 view;
+    uniform mat4 projection;
+
+    void main() {
+        FragPos = vec3(model * vec4(aPos, 1.0));  // Calculate world-space position
+        Normal = mat3(transpose(inverse(model))) * aNormal;  // Transform normal to world space
+        gl_Position = projection * view * vec4(FragPos, 1.0);
+    }
+)";
+
+const char* worldspaceNormalsFragmentShaderSource = R"(
+    #version 430 core
+    layout(location = 0) out vec3 NormalColor;    // For the world-space normal buffer
+
+    in vec3 FragPos;
+    in vec3 Normal;
+
+    void main() {
+        NormalColor = normalize(Normal);  // Output normalized world-space normal
     }
 )";
 
@@ -450,12 +500,53 @@ int main() {
     glDeleteShader(quadVertexShader);
     glDeleteShader(quadFragmentShader);
 
-    // Create a framebuffer for rendering scene
-    GLuint sceneFBO;
-    glGenFramebuffers(1, &sceneFBO);
-    glBindFramebuffer(GL_FRAMEBUFFER, sceneFBO);
+    // Compile the world-space normals vertex shader
+    GLuint worldspaceNormalsVertexShader = glCreateShader(GL_VERTEX_SHADER);
+    glShaderSource(worldspaceNormalsVertexShader, 1, &worldspaceNormalsVertexShaderSource, NULL);
+    glCompileShader(worldspaceNormalsVertexShader);
 
-    // Create a texture for the color attachment
+    // Check for vertex shader compile errors
+    glGetShaderiv(worldspaceNormalsVertexShader, GL_COMPILE_STATUS, &success);
+    if (!success) {
+        glGetShaderInfoLog(worldspaceNormalsVertexShader, 512, NULL, infoLog);
+        std::cerr << "ERROR::WORLSPACE_NORMALS::VERTEX::COMPILATION_FAILED\n" << infoLog << std::endl;
+    }
+
+    // Compile the world-space normals fragment shader
+    GLuint worldspaceNormalsFragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(worldspaceNormalsFragmentShader, 1, &worldspaceNormalsFragmentShaderSource, NULL);
+    glCompileShader(worldspaceNormalsFragmentShader);
+
+    // Check for fragment shader compile errors
+    glGetShaderiv(worldspaceNormalsFragmentShader, GL_COMPILE_STATUS, &success);
+    if (!success) {
+        glGetShaderInfoLog(worldspaceNormalsFragmentShader, 512, NULL, infoLog);
+        std::cerr << "ERROR::WORLSPACE_NORMALS::FRAGMENT::COMPILATION_FAILED\n" << infoLog << std::endl;
+    }
+
+    // Link the world-space normals shaders into a shader program
+    GLuint worldspaceNormalsShaderProgram = glCreateProgram();
+    glAttachShader(worldspaceNormalsShaderProgram, worldspaceNormalsVertexShader);
+    glAttachShader(worldspaceNormalsShaderProgram, worldspaceNormalsFragmentShader);
+    glLinkProgram(worldspaceNormalsShaderProgram);
+
+    // Check for linking errors
+    glGetProgramiv(worldspaceNormalsShaderProgram, GL_LINK_STATUS, &success);
+    if (!success) {
+        glGetProgramInfoLog(worldspaceNormalsShaderProgram, 512, NULL, infoLog);
+        std::cerr << "ERROR::WORLSPACE_NORMALS::PROGRAM::LINKING_FAILED\n" << infoLog << std::endl;
+    }
+
+    // Clean up shaders as they are no longer necessary after linking
+    glDeleteShader(worldspaceNormalsVertexShader);
+    glDeleteShader(worldspaceNormalsFragmentShader);
+
+    // Create a framebuffer for the color pass
+    GLuint colorFBO;
+    glGenFramebuffers(1, &colorFBO);
+    glBindFramebuffer(GL_FRAMEBUFFER, colorFBO);
+
+    // Create a texture for the color attachment (color pass)
     GLuint colorMap;
     glGenTextures(1, &colorMap);
     glBindTexture(GL_TEXTURE_2D, colorMap);
@@ -466,7 +557,7 @@ int main() {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, colorMap, 0);
 
-    // Depth buffer
+    // Depth buffer (shared between FBOs)
     GLuint depthMap;
     glGenTextures(1, &depthMap);
     glBindTexture(GL_TEXTURE_2D, depthMap);
@@ -475,9 +566,36 @@ int main() {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthMap, 0);
 
-    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
-        std::cerr << "Framebuffer is not complete!" << std::endl;
+    // Create a framebuffer for the normal pass
+    GLuint normalFBO;
+    glGenFramebuffers(1, &normalFBO);
+    glBindFramebuffer(GL_FRAMEBUFFER, normalFBO);
 
+    // Create a texture for the normal attachment
+    GLuint normalMap;
+    glGenTextures(1, &normalMap);
+    glBindTexture(GL_TEXTURE_2D, normalMap);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, WIDTH, HEIGHT, 0, GL_RGB, GL_FLOAT, NULL);  // 16-bit float for normals
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, normalMap, 0);
+
+    // Create and attach a depth buffer (renderbuffer) to normalFBO
+    GLuint normalDepthRBO;
+    glGenRenderbuffers(1, &normalDepthRBO);
+    glBindRenderbuffer(GL_RENDERBUFFER, normalDepthRBO);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT, WIDTH, HEIGHT);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, normalDepthRBO);
+
+    // Set the list of draw buffers to use
+    GLenum attachments[1] = { GL_COLOR_ATTACHMENT0 };
+    glDrawBuffers(1, attachments);
+
+    // Check if framebuffer is complete
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+        std::cerr << "Normal framebuffer is not complete!" << std::endl;
+
+    // Unbind framebuffer
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
     GLuint noiseTexture;
@@ -520,28 +638,30 @@ int main() {
     glEnableVertexAttribArray(1);
     glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
 
+    int debugMode = 0;  // Initialize outside the render loop
+    bool keyPressed = false;  // Track key press state
+
     // Render loop
     while (!glfwWindowShouldClose(window)) {
         float currentFrame = static_cast<float>(glfwGetTime());
         deltaTime = currentFrame - lastFrame;
         lastFrame = currentFrame;
 
-        double currentTime = glfwGetTime();
-        double elapsedTime = currentTime - previousTime;
-        frameCount++;
-
         processInput(window);
 
-        // Input
+        // Input handling
         if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
             glfwSetWindowShouldClose(window, true);
 
-        // Render
-        glBindFramebuffer(GL_FRAMEBUFFER, sceneFBO);
+        // ========== First Pass: Regular Forward Rendering ==========
+        glBindFramebuffer(GL_FRAMEBUFFER, colorFBO);
+        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+            std::cerr << "Color framebuffer is not complete!" << std::endl;
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthMap, 0);  // Attach depth buffer
         glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        // Use the shader program
+        // Use the regular shader program
         glUseProgram(shaderProgram);
 
         // Set up view and projection matrices
@@ -554,7 +674,7 @@ int main() {
         glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
         glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projection));
 
-        // Render the loaded meshes
+        // Render the loaded meshes (color buffer)
         for (const auto& mesh : meshes) {
             glm::mat4 model = glm::mat4(1.0f);
             GLuint modelLoc = glGetUniformLocation(shaderProgram, "model");
@@ -562,52 +682,93 @@ int main() {
             mesh.Draw(shaderProgram);
         }
 
-        // Unbind the framebuffer
+        // Unbind the framebuffer after first pass
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
+        // ========== Second Pass: World-Space Normals Rendering ==========
+        glEnable(GL_DEPTH_TEST);
+
+        glBindFramebuffer(GL_FRAMEBUFFER, normalFBO);
+        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+            std::cerr << "Normal framebuffer is not complete!" << std::endl;
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);  // Clear both color and depth buffers
+
+        // Use the world-space normals shader program
+        glUseProgram(worldspaceNormalsShaderProgram);
+
+        // Set the same view, projection, and model matrices
+        glUniformMatrix4fv(glGetUniformLocation(worldspaceNormalsShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
+        glUniformMatrix4fv(glGetUniformLocation(worldspaceNormalsShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+
+        // Render the loaded meshes (normal buffer)
+        for (const auto& mesh : meshes) {
+            glm::mat4 model = glm::mat4(1.0f);
+            GLuint modelLoc = glGetUniformLocation(worldspaceNormalsShaderProgram, "model");
+            glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
+            mesh.Draw(worldspaceNormalsShaderProgram);
+        }
+
+        // Unbind the framebuffer after the second pass
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+        // ========== Third Pass: Post-Processing (e.g., SSAO, Debugging) ==========
         // Clear the screen and disable depth test for the quad
         glClear(GL_COLOR_BUFFER_BIT);
         glDisable(GL_DEPTH_TEST);
 
-        // Render the quad with the fog effect
-        glUseProgram(quadShaderProgram);
+        // Handle key inputs to toggle between modes
+        if (glfwGetKey(window, GLFW_KEY_1) == GLFW_PRESS && !keyPressed) {
+            debugMode = 0;  // Show color buffer
+            keyPressed = true;
+        }
+        else if (glfwGetKey(window, GLFW_KEY_2) == GLFW_PRESS && !keyPressed) {
+            debugMode = 1;  // Show normal buffer
+            keyPressed = true;
+        }
+        else if (glfwGetKey(window, GLFW_KEY_3) == GLFW_PRESS && !keyPressed) {
+            debugMode = 2;  // Show depth buffer
+            keyPressed = true;
+        }
 
-        // Get current time and pass it to the shader
-        float timeValue = glfwGetTime();
-        glUniform1f(glGetUniformLocation(quadShaderProgram, "time"), timeValue);
+        // Reset keyPressed state when the keys are released
+        if (glfwGetKey(window, GLFW_KEY_1) == GLFW_RELEASE && glfwGetKey(window, GLFW_KEY_2) == GLFW_RELEASE && glfwGetKey(window, GLFW_KEY_3) == GLFW_RELEASE) {
+            keyPressed = false;
+        }
+
+        // Use the post-processing (quad) shader program
+        glUseProgram(quadShaderProgram);
+        glUniform1i(glGetUniformLocation(quadShaderProgram, "debugMode"), debugMode);
 
         // Set fog parameters
-        glm::vec3 fogColor(0.33725490196078434f, 0.34901960784313724f, 0.43529411764705883f); // Fog color
-        float fogStart = 1.0f; // Fog starts at this distance
-        float fogEnd = 20.0f;  // Fog fully applied at this distance
+        glm::vec3 fogColor(0.337f, 0.349f, 0.435f); // Fog color
+        float fogStart = 1.0f;
+        float fogEnd = 20.0f;
         float fogDensity = 0.12f;
         glUniform3fv(glGetUniformLocation(quadShaderProgram, "fogColor"), 1, glm::value_ptr(fogColor));
         glUniform1f(glGetUniformLocation(quadShaderProgram, "fogDensity"), fogDensity);
         glUniform1f(glGetUniformLocation(quadShaderProgram, "fogStart"), fogStart);
         glUniform1f(glGetUniformLocation(quadShaderProgram, "fogEnd"), fogEnd);
+        glUniform1f(glGetUniformLocation(quadShaderProgram, "near"), 0.1f);  // Near plane
+        glUniform1f(glGetUniformLocation(quadShaderProgram, "far"), 5000.0f);  // Far plane
 
-        // Set near and far planes
-        glUniform1f(glGetUniformLocation(quadShaderProgram, "near"), 0.1f);
-        glUniform1f(glGetUniformLocation(quadShaderProgram, "far"), 5000.0f);
-
-        // Bind textures for the color and depth maps
+        // Bind the textures for the quad (color, normal, depth)
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, colorMap);
         glUniform1i(glGetUniformLocation(quadShaderProgram, "colorMap"), 0);
 
         glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, depthMap);
-        glUniform1i(glGetUniformLocation(quadShaderProgram, "depthMap"), 1);
+        glBindTexture(GL_TEXTURE_2D, normalMap);  // Normal map from G-buffer
+        glUniform1i(glGetUniformLocation(quadShaderProgram, "normalMap"), 1);
 
-        // Bind the noise texture
         glActiveTexture(GL_TEXTURE2);
-        glBindTexture(GL_TEXTURE_2D, noiseTexture);
-        glUniform1i(glGetUniformLocation(quadShaderProgram, "noiseTexture"), 2);
+        glBindTexture(GL_TEXTURE_2D, depthMap);  // Depth map
+        glUniform1i(glGetUniformLocation(quadShaderProgram, "depthMap"), 2);
 
-        // Draw the quad
+        // Render the quad (fullscreen post-processing pass)
         glBindVertexArray(quadVAO);
         glDrawArrays(GL_TRIANGLES, 0, 6);
 
+        // Re-enable depth testing
         glEnable(GL_DEPTH_TEST);
 
         // Swap buffers and poll IO events
