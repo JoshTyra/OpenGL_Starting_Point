@@ -686,8 +686,6 @@ int main() {
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
         // ========== Second Pass: World-Space Normals Rendering ==========
-        glEnable(GL_DEPTH_TEST);
-
         glBindFramebuffer(GL_FRAMEBUFFER, normalFBO);
         if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
             std::cerr << "Normal framebuffer is not complete!" << std::endl;
