@@ -39,7 +39,7 @@ float lastFrame = 0.0f; // Time of last frame
 double previousTime = 0.0;
 int frameCount = 0;
 
-Camera camera(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), -180.0f, 0.0f, 6.0f, 0.1f, 45.0f);
+Camera camera(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), -180.0f, 0.0f, 6.0f, 0.1f, 45.0f, 0.1f, 5000.0f);
 
 // Vertex Shader source code
 const char* vertexShaderSource = R"(
@@ -277,7 +277,10 @@ struct Mesh {
 
 std::vector<Mesh> loadModel(const std::string& path) {
     Assimp::Importer importer;
-    const aiScene* scene = importer.ReadFile(path, aiProcess_Triangulate | aiProcess_FlipUVs);
+    const aiScene* scene = importer.ReadFile(path,
+        aiProcess_Triangulate | aiProcess_FlipUVs |
+        aiProcess_GenSmoothNormals | aiProcess_JoinIdenticalVertices |
+        aiProcess_CalcTangentSpace);
 
     if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode) {
         std::cerr << "ERROR::ASSIMP::" << importer.GetErrorString() << std::endl;
@@ -291,7 +294,7 @@ std::vector<Mesh> loadModel(const std::string& path) {
         std::vector<Vertex> vertices;
         std::vector<unsigned int> indices;
 
-        // Process vertices and indices (already done in your code)
+        // Process vertices and indices
         for (unsigned int j = 0; j < mesh->mNumVertices; j++) {
             Vertex vertex;
             vertex.Position = glm::vec3(mesh->mVertices[j].x, mesh->mVertices[j].y, mesh->mVertices[j].z);
@@ -415,7 +418,7 @@ int main() {
     glEnable(GL_DEPTH_TEST);
 
     // Load the model
-    std::vector<Mesh> meshes = loadModel(FileSystemUtils::getAssetFilePath("models/tutorial_map.obj"));
+    std::vector<Mesh> meshes = loadModel(FileSystemUtils::getAssetFilePath("models/sponza.obj"));
 
     // Build and compile the shader program
     // Vertex Shader
@@ -746,8 +749,8 @@ int main() {
         glUniform1f(glGetUniformLocation(quadShaderProgram, "fogDensity"), fogDensity);
         glUniform1f(glGetUniformLocation(quadShaderProgram, "fogStart"), fogStart);
         glUniform1f(glGetUniformLocation(quadShaderProgram, "fogEnd"), fogEnd);
-        glUniform1f(glGetUniformLocation(quadShaderProgram, "near"), 0.1f);  // Near plane
-        glUniform1f(glGetUniformLocation(quadShaderProgram, "far"), 5000.0f);  // Far plane
+        glUniform1f(glGetUniformLocation(quadShaderProgram, "near"), camera.getNearPlane());  // Near plane
+        glUniform1f(glGetUniformLocation(quadShaderProgram, "far"), camera.getFarPlane());  // Far plane
 
         // Bind the textures for the quad (color, normal, depth)
         glActiveTexture(GL_TEXTURE0);
