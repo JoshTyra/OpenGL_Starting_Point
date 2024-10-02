@@ -39,7 +39,7 @@ float lastFrame = 0.0f; // Time of last frame
 double previousTime = 0.0;
 int frameCount = 0;
 
-Camera camera(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), -180.0f, 0.0f, 6.0f, 0.1f, 45.0f, 0.1f, 5000.0f);
+Camera camera(glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), -180.0f, 0.0f, 6.0f, 0.1f, 45.0f, 0.1f, 500.0f);
 
 // Vertex Shader source code
 const char* vertexShaderSource = R"(
@@ -418,7 +418,7 @@ int main() {
     glEnable(GL_DEPTH_TEST);
 
     // Load the model
-    std::vector<Mesh> meshes = loadModel(FileSystemUtils::getAssetFilePath("models/sponza.obj"));
+    std::vector<Mesh> meshes = loadModel(FileSystemUtils::getAssetFilePath("models/tutorial_map.obj"));
 
     // Build and compile the shader program
     // Vertex Shader
