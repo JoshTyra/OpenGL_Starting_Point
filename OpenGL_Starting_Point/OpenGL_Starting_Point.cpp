@@ -68,9 +68,19 @@ const char* fragmentShaderSource = R"(
     in vec2 TexCoords;
 
     uniform sampler2D diffuseTexture;
+    uniform int isGlowing;
 
     void main() {
-        FragColor = texture(diffuseTexture, TexCoords);
+        // Sample the diffuse texture
+        vec4 color = texture(diffuseTexture, TexCoords);
+
+        // If the material is glowing, handle it differently
+        if (isGlowing == 1) {
+            FragColor = color;
+        } else {
+            // For non-glowing materials, just render the diffuse texture
+            FragColor = color;
+        }
     }
 )";
 
@@ -95,6 +105,7 @@ const char* quadFragmentShaderSource = R"(
     uniform sampler2D colorMap;      // The color buffer (final scene color)
     uniform sampler2D normalMap;     // The world-space normal buffer
     uniform sampler2D depthMap;      // The depth buffer
+    uniform sampler2D glowTexture;   // The glow buffer
     uniform int debugMode;           // Debug mode to switch between different G-buffer outputs
 
     uniform vec3 fogColor;           // Fog color
@@ -145,6 +156,9 @@ const char* quadFragmentShaderSource = R"(
             depthValue = clamp(depthValue, 0.0, 1.0);
 
             FragColor = vec4(vec3(depthValue), 1.0);
+        } else if (debugMode == 3) {
+            // Render the glow buffer (glowTexture)
+            FragColor = texture(glowTexture, TexCoords);
         }
     }
 )";
@@ -228,13 +242,16 @@ struct Mesh {
     std::vector<unsigned int> indices;
     mutable unsigned int VAO;  // Mark as mutable to allow modification in const functions
     GLuint diffuseTexture;  // Store diffuse texture ID
+    bool isGlowing;  // New member for glowing flag
 
-    Mesh(std::vector<Vertex> vertices, std::vector<unsigned int> indices, GLuint diffuseTexture)
-        : vertices(vertices), indices(indices), diffuseTexture(diffuseTexture) {
+    // Updated constructor
+    Mesh(std::vector<Vertex> vertices, std::vector<unsigned int> indices, GLuint diffuseTexture, bool isGlowing)
+        : vertices(vertices), indices(indices), diffuseTexture(diffuseTexture), isGlowing(isGlowing) {
         setupMesh();
     }
 
-    void setupMesh() const {  // Mark as const
+    void setupMesh() const {
+        // Set up the VAO, VBO, and EBO as before
         glGenVertexArrays(1, &VAO);
         glBindVertexArray(VAO);
 
@@ -261,14 +278,27 @@ struct Mesh {
         glBindVertexArray(0);
     }
 
-    void Draw(GLuint shaderProgram) const {
+    void Draw(GLuint shaderProgram, bool glowPass) const {
         // Bind diffuse texture
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, diffuseTexture);
         glUniform1i(glGetUniformLocation(shaderProgram, "diffuseTexture"), 0);
 
-        // Continue with binding VAO and drawing the mesh
-        glUseProgram(shaderProgram);
+        if (glowPass) {
+            if (isGlowing) {
+                glUniform1i(glGetUniformLocation(shaderProgram, "isGlowing"), 1);
+            }
+            else {
+                // Skip non-glowing materials in the glow pass
+                return;
+            }
+        }
+        else {
+            // Normal rendering pass: just bind the glow uniform
+            glUniform1i(glGetUniformLocation(shaderProgram, "isGlowing"), isGlowing ? 1 : 0);
+        }
+
+        // Bind VAO and draw the mesh (remove glUseProgram call)
         glBindVertexArray(VAO);
         glDrawElements(GL_TRIANGLES, indices.size(), GL_UNSIGNED_INT, 0);
         glBindVertexArray(0);
@@ -317,20 +347,35 @@ std::vector<Mesh> loadModel(const std::string& path) {
             }
         }
 
-        // Load materials
+        // Load the material
         aiMaterial* material = scene->mMaterials[mesh->mMaterialIndex];
         GLuint diffuseTexture = 0;
+        bool isGlowing = false;  // New flag for glowing
 
         if (material->GetTextureCount(aiTextureType_DIFFUSE) > 0) {
             aiString str;
             material->GetTexture(aiTextureType_DIFFUSE, 0, &str);
-
-            // Use the texture path directly
             std::string texturePath = FileSystemUtils::getAssetFilePath(std::string(str.C_Str()));
             diffuseTexture = loadTextureFromFile(texturePath.c_str(), "");
         }
 
-        meshes.push_back(Mesh(vertices, indices, diffuseTexture));
+        // Retrieve the emissive color 'Ke'
+        aiColor3D emissive(0.0f, 0.0f, 0.0f);
+        if (material->Get(AI_MATKEY_COLOR_EMISSIVE, emissive) == AI_SUCCESS) {
+            if (emissive.r > 0.0f || emissive.g > 0.0f || emissive.b > 0.0f) {
+                isGlowing = true;
+                std::cout << "Mesh " << i << " is glowing with emissive color: "
+                    << emissive.r << ", " << emissive.g << ", " << emissive.b << std::endl;
+            }
+            else {
+                std::cout << "Mesh " << i << " is not glowing." << std::endl;
+            }
+        }
+        else {
+            std::cout << "Mesh " << i << " does not have an emissive color property." << std::endl;
+        }
+
+        meshes.push_back(Mesh(vertices, indices, diffuseTexture, isGlowing));
     }
 
     return meshes;
@@ -558,15 +603,19 @@ int main() {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    // Attach colorMap to colorFBO
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, colorMap, 0);
 
-    // Depth buffer (shared between FBOs)
+    // Create the shared depth texture
     GLuint depthMap;
     glGenTextures(1, &depthMap);
     glBindTexture(GL_TEXTURE_2D, depthMap);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, WIDTH, HEIGHT, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, WIDTH, HEIGHT, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+    // Attach depthMap to colorFBO
+    glBindFramebuffer(GL_FRAMEBUFFER, colorFBO);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthMap, 0);
 
     // Create a framebuffer for the normal pass
@@ -583,12 +632,30 @@ int main() {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, normalMap, 0);
 
-    // Create and attach a depth buffer (renderbuffer) to normalFBO
-    GLuint normalDepthRBO;
-    glGenRenderbuffers(1, &normalDepthRBO);
-    glBindRenderbuffer(GL_RENDERBUFFER, normalDepthRBO);
-    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT, WIDTH, HEIGHT);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, normalDepthRBO);
+    // Attach shared depthMap to normalFBO
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthMap, 0);
+
+    // Check if framebuffer is complete
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+        std::cerr << "Normal framebuffer is not complete!" << std::endl;
+
+    // Create and set up glowFBO
+    GLuint glowFBO, glowTexture;
+    glGenFramebuffers(1, &glowFBO);
+    glBindFramebuffer(GL_FRAMEBUFFER, glowFBO);
+
+    glGenTextures(1, &glowTexture);
+    glBindTexture(GL_TEXTURE_2D, glowTexture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, WIDTH, HEIGHT, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, glowTexture, 0);
+
+    // Attach the shared depthMap to glowFBO
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthMap, 0);
+
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+        std::cerr << "Error setting up glow FBO!" << std::endl;
 
     // Set the list of draw buffers to use
     GLenum attachments[1] = { GL_COLOR_ATTACHMENT0 };
@@ -596,7 +663,7 @@ int main() {
 
     // Check if framebuffer is complete
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
-        std::cerr << "Normal framebuffer is not complete!" << std::endl;
+        std::cerr << "Glow framebuffer is not complete!" << std::endl;
 
     // Unbind framebuffer
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -657,11 +724,8 @@ int main() {
             glfwSetWindowShouldClose(window, true);
 
         // ========== First Pass: Regular Forward Rendering ==========
+        // Render the scene to the color FBO (Main Scene)
         glBindFramebuffer(GL_FRAMEBUFFER, colorFBO);
-        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
-            std::cerr << "Color framebuffer is not complete!" << std::endl;
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthMap, 0);  // Attach depth buffer
-        glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         // Use the regular shader program
@@ -672,23 +736,38 @@ int main() {
         glm::mat4 projection = camera.getProjectionMatrix((float)WIDTH / (float)HEIGHT);
 
         // Pass view and projection matrices to the shader
-        GLuint viewLoc = glGetUniformLocation(shaderProgram, "view");
-        GLuint projLoc = glGetUniformLocation(shaderProgram, "projection");
-        glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
-        glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projection));
+        glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
+        glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
 
-        // Render the loaded meshes (color buffer)
+        // Render all objects (both glowing and non-glowing)
         for (const auto& mesh : meshes) {
             glm::mat4 model = glm::mat4(1.0f);
-            GLuint modelLoc = glGetUniformLocation(shaderProgram, "model");
-            glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
-            mesh.Draw(shaderProgram);
+            glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(model));
+            mesh.Draw(shaderProgram, false);  // Render all objects (non-glow and glow)
         }
 
-        // Unbind the framebuffer after first pass
+        // ========== Second Pass: Glow Rendering ==========
+        // Bind the glow FBO and render only the glowing objects
+        glBindFramebuffer(GL_FRAMEBUFFER, glowFBO);
+        glClear(GL_COLOR_BUFFER_BIT); // Do not clear depth buffer
+
+        // Set depth function to GL_LEQUAL to allow fragments with depth values equal to the depth buffer to pass
+        glDepthFunc(GL_LEQUAL);
+
+        // Render only the glowing objects
+        for (const auto& mesh : meshes) {
+            glm::mat4 model = glm::mat4(1.0f);
+            glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(model));
+            mesh.Draw(shaderProgram, true);  // Glow pass
+        }
+
+        // Reset depth function to default (GL_LESS)
+        glDepthFunc(GL_LESS);
+
+        // Unbind the framebuffer
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
-        // ========== Second Pass: World-Space Normals Rendering ==========
+        // ========== Third Pass: World-Space Normals Rendering ==========
         glBindFramebuffer(GL_FRAMEBUFFER, normalFBO);
         if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
             std::cerr << "Normal framebuffer is not complete!" << std::endl;
@@ -706,20 +785,20 @@ int main() {
             glm::mat4 model = glm::mat4(1.0f);
             GLuint modelLoc = glGetUniformLocation(worldspaceNormalsShaderProgram, "model");
             glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
-            mesh.Draw(worldspaceNormalsShaderProgram);
+            mesh.Draw(worldspaceNormalsShaderProgram, false);
         }
 
         // Unbind the framebuffer after the second pass
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
-        // ========== Third Pass: Post-Processing (e.g., SSAO, Debugging) ==========
+        // ========== Fourth Pass: Post-Processing (e.g., SSAO, Debugging) ==========
         // Clear the screen and disable depth test for the quad
         glClear(GL_COLOR_BUFFER_BIT);
         glDisable(GL_DEPTH_TEST);
 
         // Handle key inputs to toggle between modes
         if (glfwGetKey(window, GLFW_KEY_1) == GLFW_PRESS && !keyPressed) {
-            debugMode = 0;  // Show color buffer
+            debugMode = 0;  // Show color buffer (main scene)
             keyPressed = true;
         }
         else if (glfwGetKey(window, GLFW_KEY_2) == GLFW_PRESS && !keyPressed) {
@@ -730,9 +809,14 @@ int main() {
             debugMode = 2;  // Show depth buffer
             keyPressed = true;
         }
+        else if (glfwGetKey(window, GLFW_KEY_4) == GLFW_PRESS && !keyPressed) {
+            debugMode = 3;  // Show glow buffer
+            keyPressed = true;
+        }
 
         // Reset keyPressed state when the keys are released
-        if (glfwGetKey(window, GLFW_KEY_1) == GLFW_RELEASE && glfwGetKey(window, GLFW_KEY_2) == GLFW_RELEASE && glfwGetKey(window, GLFW_KEY_3) == GLFW_RELEASE) {
+        if (glfwGetKey(window, GLFW_KEY_1) == GLFW_RELEASE && glfwGetKey(window, GLFW_KEY_2) == GLFW_RELEASE &&
+            glfwGetKey(window, GLFW_KEY_3) == GLFW_RELEASE && glfwGetKey(window, GLFW_KEY_4) == GLFW_RELEASE) {
             keyPressed = false;
         }
 
@@ -764,6 +848,10 @@ int main() {
         glActiveTexture(GL_TEXTURE2);
         glBindTexture(GL_TEXTURE_2D, depthMap);  // Depth map
         glUniform1i(glGetUniformLocation(quadShaderProgram, "depthMap"), 2);
+
+        glActiveTexture(GL_TEXTURE3);
+        glBindTexture(GL_TEXTURE_2D, glowTexture);  // Glow buffer
+        glUniform1i(glGetUniformLocation(quadShaderProgram, "glowTexture"), 3);
 
         // Render the quad (fullscreen post-processing pass)
         glBindVertexArray(quadVAO);
