@@ -1013,7 +1013,7 @@ int main() {
         glUniform1f(glGetUniformLocation(quadShaderProgram, "fogEnd"), fogEnd);
         glUniform1f(glGetUniformLocation(quadShaderProgram, "near"), camera.getNearPlane());  // Near plane
         glUniform1f(glGetUniformLocation(quadShaderProgram, "far"), camera.getFarPlane());  // Far plane
-        glUniform1f(glGetUniformLocation(quadShaderProgram, "bloomIntensity"), 1.0f); // Adjust as needed
+        glUniform1f(glGetUniformLocation(quadShaderProgram, "bloomIntensity"), 2.0f); // Adjust as needed
 
         // Bind the textures for the quad (color, normal, depth)
         glActiveTexture(GL_TEXTURE0);
@@ -1050,6 +1050,10 @@ int main() {
 
     // Clean up
     glDeleteProgram(shaderProgram);
+    glDeleteProgram(quadShaderProgram);
+    glDeleteProgram(worldspaceNormalsShaderProgram);
+    glDeleteProgram(horizontalBlurShaderProgram);
+    glDeleteProgram(verticalBlurShaderProgram);
     glDeleteVertexArrays(1, &quadVAO);
     glDeleteBuffers(1, &quadVBO);
     glDeleteFramebuffers(1, &colorFBO);
