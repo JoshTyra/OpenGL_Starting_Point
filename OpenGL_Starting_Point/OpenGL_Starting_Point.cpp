@@ -43,7 +43,7 @@ Camera camera(glm::vec3(0.0f, 5.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), -180.0f,
 
 // Vertex Shader source code
 const char* vertexShaderSource = R"(
-    #version 330 core
+    #version 430 core
     layout (location = 0) in vec3 aPos;
     layout (location = 1) in vec3 aNormal;
     layout (location = 2) in vec2 aTexCoords;
@@ -62,7 +62,7 @@ const char* vertexShaderSource = R"(
 
 // Fragment Shader source code
 const char* fragmentShaderSource = R"(
-    #version 330 core
+    #version 430 core
     out vec4 FragColor;
 
     in vec2 TexCoords;
@@ -85,7 +85,7 @@ const char* fragmentShaderSource = R"(
 )";
 
 const char* quadVertexShaderSource = R"(
-    #version 330 core
+    #version 430 core
     layout (location = 0) in vec2 aPos;
     layout (location = 1) in vec2 aTexCoords;
 
@@ -106,6 +106,7 @@ const char* quadFragmentShaderSource = R"(
     uniform sampler2D normalMap;     // The world-space normal buffer
     uniform sampler2D depthMap;      // The depth buffer
     uniform sampler2D glowTexture;   // The glow buffer
+    uniform sampler2D blurredGlowTexture; // The blurred glow buffer
     uniform int debugMode;           // Debug mode to switch between different G-buffer outputs
 
     uniform vec3 fogColor;           // Fog color
@@ -114,6 +115,7 @@ const char* quadFragmentShaderSource = R"(
     uniform float fogDensity;        // Fog density for exponential fog
     uniform float fogStart;          // Start distance for fog
     uniform float fogEnd;            // End distance for fog
+    uniform float bloomIntensity;    // Bloom intensity
 
     float LinearizeDepth(float depth) {
         float z = depth * 2.0 - 1.0;  // Back to NDC
@@ -126,22 +128,29 @@ const char* quadFragmentShaderSource = R"(
     }
 
     void main() {
-       if (debugMode == 0) {
-            // Sample color and depth from textures
-            vec3 sceneColor = texture(colorMap, TexCoords).rgb;
-            float depth = texture(depthMap, TexCoords).r;
-    
-            // Linearize the depth value and calculate fog factor
-            float linearDepth = LinearizeDepth(depth); 
+   if (debugMode == 0) {
+        // Sample color and depth from textures
+        vec3 sceneColor = texture(colorMap, TexCoords).rgb;
+        float depth = texture(depthMap, TexCoords).r;
 
-            // Exponential fog factor for smoother, more gradual fog
-            float fogFactor = CalculateExponentialFogFactor(linearDepth);
+        // Linearize the depth value and calculate fog factor
+        float linearDepth = LinearizeDepth(depth); 
 
-            // Blend scene color with fog color based on fog factor
-            vec3 finalColor = mix(fogColor, sceneColor, fogFactor);
-    
-            FragColor = vec4(finalColor, 1.0);
-        } else if (debugMode == 1) {
+        // Exponential fog factor for smoother, more gradual fog
+        float fogFactor = CalculateExponentialFogFactor(linearDepth);
+
+        // Blend scene color with fog color based on fog factor
+        vec3 finalColor = mix(fogColor, sceneColor, fogFactor);
+
+        // Sample the blurred glow texture
+        vec3 blurredGlow = texture(blurredGlowTexture, TexCoords).rgb;
+
+        // Combine the scene color with the blurred glow
+        finalColor += blurredGlow * bloomIntensity;
+
+        FragColor = vec4(finalColor, 1.0);
+
+        }else if (debugMode == 1) {
             // Display the world-space normal buffer
             vec3 normal = texture(normalMap, TexCoords).rgb;
             FragColor = vec4(normal * 0.5 + 0.5, 1.0);  // Map normals from [-1, 1] to [0, 1] for display
@@ -159,6 +168,9 @@ const char* quadFragmentShaderSource = R"(
         } else if (debugMode == 3) {
             // Render the glow buffer (glowTexture)
             FragColor = texture(glowTexture, TexCoords);
+        }else if (debugMode == 4) {
+            // Render the blurred glow buffer
+            FragColor = vec4(texture(blurredGlowTexture, TexCoords).rgb, 1.0);
         }
     }
 )";
@@ -191,6 +203,52 @@ const char* worldspaceNormalsFragmentShaderSource = R"(
 
     void main() {
         NormalColor = normalize(Normal);  // Output normalized world-space normal
+    }
+)";
+
+// Gaussian fragment Shader source code
+const char* HorizontalblurfragmentShaderSource = R"(
+    #version 430 core
+    out vec4 FragColor;
+    in vec2 TexCoords;
+
+    uniform sampler2D image;
+    uniform float weight[5];  // Array of weights for the blur
+    uniform float texelOffsetX; // The horizontal offset per texel
+
+    void main() {
+        vec2 texOffset = vec2(texelOffsetX, 0.0);  // Offset in the X direction
+        vec4 result = texture(image, TexCoords) * weight[0];  // Center pixel
+
+        for (int i = 1; i < 5; ++i) {
+            result += texture(image, TexCoords + texOffset * float(i)) * weight[i];
+            result += texture(image, TexCoords - texOffset * float(i)) * weight[i];
+        }
+
+        FragColor = result;
+    }
+)";
+
+// Gaussian fragment Shader source code
+const char* VerticalblurfragmentShaderSource = R"(
+    #version 430 core
+    out vec4 FragColor;
+    in vec2 TexCoords;
+
+    uniform sampler2D image;
+    uniform float weight[5];  // Array of weights for the blur
+    uniform float texelOffsetY; // The vertical offset per texel
+
+    void main() {
+        vec2 texOffset = vec2(0.0, texelOffsetY);  // Offset in the Y direction
+        vec4 result = texture(image, TexCoords) * weight[0];  // Center pixel
+
+        for (int i = 1; i < 5; ++i) {
+            result += texture(image, TexCoords + texOffset * float(i)) * weight[i];
+            result += texture(image, TexCoords - texOffset * float(i)) * weight[i];
+        }
+
+        FragColor = result;
     }
 )";
 
@@ -589,6 +647,65 @@ int main() {
     glDeleteShader(worldspaceNormalsVertexShader);
     glDeleteShader(worldspaceNormalsFragmentShader);
 
+    /* Blur shaders section */
+    // Horizontal Blur Fragment Shader
+    GLuint horizontalBlurFragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(horizontalBlurFragmentShader, 1, &HorizontalblurfragmentShaderSource, NULL);
+    glCompileShader(horizontalBlurFragmentShader);
+
+    // Check for shader compile errors
+    glGetShaderiv(horizontalBlurFragmentShader, GL_COMPILE_STATUS, &success);
+    if (!success) {
+        glGetShaderInfoLog(horizontalBlurFragmentShader, 512, NULL, infoLog);
+        std::cerr << "ERROR::HORIZONTAL_BLUR_SHADER::FRAGMENT::COMPILATION_FAILED\n" << infoLog << std::endl;
+    }
+
+    // Link Horizontal Blur Shader into a Program
+    GLuint horizontalBlurShaderProgram = glCreateProgram();
+    glAttachShader(horizontalBlurShaderProgram, quadVertexShader); // Use the quad vertex shader
+    glAttachShader(horizontalBlurShaderProgram, horizontalBlurFragmentShader);
+    glLinkProgram(horizontalBlurShaderProgram);
+
+    // Check for linking errors
+    glGetProgramiv(horizontalBlurShaderProgram, GL_LINK_STATUS, &success);
+    if (!success) {
+        glGetProgramInfoLog(horizontalBlurShaderProgram, 512, NULL, infoLog);
+        std::cerr << "ERROR::HORIZONTAL_BLUR_SHADER::PROGRAM::LINKING_FAILED\n" << infoLog << std::endl;
+    }
+
+    // Clean up shaders as they are no longer necessary after linking
+    glDeleteShader(horizontalBlurFragmentShader);
+
+    // Vertical Blur Fragment Shader
+    GLuint verticalBlurFragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(verticalBlurFragmentShader, 1, &VerticalblurfragmentShaderSource, NULL);
+    glCompileShader(verticalBlurFragmentShader);
+
+    // Check for shader compile errors
+    glGetShaderiv(verticalBlurFragmentShader, GL_COMPILE_STATUS, &success);
+    if (!success) {
+        glGetShaderInfoLog(verticalBlurFragmentShader, 512, NULL, infoLog);
+        std::cerr << "ERROR::VERTICAL_BLUR_SHADER::FRAGMENT::COMPILATION_FAILED\n" << infoLog << std::endl;
+    }
+
+    // Link Vertical Blur Shader into a Program
+    GLuint verticalBlurShaderProgram = glCreateProgram();
+    glAttachShader(verticalBlurShaderProgram, quadVertexShader); // Use the quad vertex shader
+    glAttachShader(verticalBlurShaderProgram, verticalBlurFragmentShader);
+    glLinkProgram(verticalBlurShaderProgram);
+
+    // Check for linking errors
+    glGetProgramiv(verticalBlurShaderProgram, GL_LINK_STATUS, &success);
+    if (!success) {
+        glGetProgramInfoLog(verticalBlurShaderProgram, 512, NULL, infoLog);
+        std::cerr << "ERROR::VERTICAL_BLUR_SHADER::PROGRAM::LINKING_FAILED\n" << infoLog << std::endl;
+    }
+
+    // Clean up shaders as they are no longer necessary after linking
+    glDeleteShader(verticalBlurFragmentShader);
+
+    /* FBO setup */
+
     // Create a framebuffer for the color pass
     GLuint colorFBO;
     glGenFramebuffers(1, &colorFBO);
@@ -665,6 +782,25 @@ int main() {
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
         std::cerr << "Glow framebuffer is not complete!" << std::endl;
 
+    GLuint blurFBO[2];
+    GLuint blurTexture[2];
+    glGenFramebuffers(2, blurFBO);
+    glGenTextures(2, blurTexture);
+
+    for (unsigned int i = 0; i < 2; i++) {
+        glBindFramebuffer(GL_FRAMEBUFFER, blurFBO[i]);
+        glBindTexture(GL_TEXTURE_2D, blurTexture[i]);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, WIDTH, HEIGHT, 0, GL_RGB, GL_FLOAT, NULL);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, blurTexture[i], 0);
+
+        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+            std::cerr << "Blur framebuffer is not complete!" << std::endl;
+    }
+
     // Unbind framebuffer
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
@@ -710,6 +846,8 @@ int main() {
 
     int debugMode = 0;  // Initialize outside the render loop
     bool keyPressed = false;  // Track key press state
+    // Gaussian weights for a 9-tap kernel (example values)
+    float weight[5] = { 0.2270270270f, 0.1945945946f, 0.1216216216f, 0.0540540541f, 0.0162162162f };
 
     // Render loop
     while (!glfwWindowShouldClose(window)) {
@@ -767,6 +905,42 @@ int main() {
         // Unbind the framebuffer
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
+        // === Blur Pass ===
+        // Prepare for blur
+        bool horizontal = true, first_iteration = true;
+        unsigned int amount = 15; // Number of blur passes
+
+        for (unsigned int i = 0; i < amount; i++) {
+            glBindFramebuffer(GL_FRAMEBUFFER, blurFBO[horizontal]);
+            glClear(GL_COLOR_BUFFER_BIT);
+
+            // Switch shaders and set uniforms
+            if (horizontal) {
+                glUseProgram(horizontalBlurShaderProgram);
+                // Set uniforms for horizontal blur shader
+                glUniform1fv(glGetUniformLocation(horizontalBlurShaderProgram, "weight"), 5, weight);
+                glUniform1f(glGetUniformLocation(horizontalBlurShaderProgram, "texelOffsetX"), 1.0f / WIDTH);
+                glUniform1i(glGetUniformLocation(horizontalBlurShaderProgram, "image"), 0);
+            }
+            else {
+                glUseProgram(verticalBlurShaderProgram);
+                // Set uniforms for vertical blur shader
+                glUniform1fv(glGetUniformLocation(verticalBlurShaderProgram, "weight"), 5, weight);
+                glUniform1f(glGetUniformLocation(verticalBlurShaderProgram, "texelOffsetY"), 1.0f / HEIGHT);
+                glUniform1i(glGetUniformLocation(verticalBlurShaderProgram, "image"), 0);
+            }
+
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, first_iteration ? glowTexture : blurTexture[!horizontal]);
+
+            glBindVertexArray(quadVAO);
+            glDrawArrays(GL_TRIANGLES, 0, 6);
+
+            horizontal = !horizontal;
+            if (first_iteration)
+                first_iteration = false;
+        }
+
         // ========== Third Pass: World-Space Normals Rendering ==========
         glBindFramebuffer(GL_FRAMEBUFFER, normalFBO);
         if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
@@ -813,6 +987,10 @@ int main() {
             debugMode = 3;  // Show glow buffer
             keyPressed = true;
         }
+        else if (glfwGetKey(window, GLFW_KEY_5) == GLFW_PRESS && !keyPressed) {
+            debugMode = 4;  // Show glow buffer
+            keyPressed = true;
+        }
 
         // Reset keyPressed state when the keys are released
         if (glfwGetKey(window, GLFW_KEY_1) == GLFW_RELEASE && glfwGetKey(window, GLFW_KEY_2) == GLFW_RELEASE &&
@@ -835,6 +1013,7 @@ int main() {
         glUniform1f(glGetUniformLocation(quadShaderProgram, "fogEnd"), fogEnd);
         glUniform1f(glGetUniformLocation(quadShaderProgram, "near"), camera.getNearPlane());  // Near plane
         glUniform1f(glGetUniformLocation(quadShaderProgram, "far"), camera.getFarPlane());  // Far plane
+        glUniform1f(glGetUniformLocation(quadShaderProgram, "bloomIntensity"), 1.0f); // Adjust as needed
 
         // Bind the textures for the quad (color, normal, depth)
         glActiveTexture(GL_TEXTURE0);
@@ -853,6 +1032,10 @@ int main() {
         glBindTexture(GL_TEXTURE_2D, glowTexture);  // Glow buffer
         glUniform1i(glGetUniformLocation(quadShaderProgram, "glowTexture"), 3);
 
+        glActiveTexture(GL_TEXTURE4);
+        glBindTexture(GL_TEXTURE_2D, blurTexture[!horizontal]);  // Use the final blurred glow texture
+        glUniform1i(glGetUniformLocation(quadShaderProgram, "blurredGlowTexture"), 4);
+
         // Render the quad (fullscreen post-processing pass)
         glBindVertexArray(quadVAO);
         glDrawArrays(GL_TRIANGLES, 0, 6);
@@ -867,6 +1050,12 @@ int main() {
 
     // Clean up
     glDeleteProgram(shaderProgram);
+    glDeleteVertexArrays(1, &quadVAO);
+    glDeleteBuffers(1, &quadVBO);
+    glDeleteFramebuffers(1, &colorFBO);
+    glDeleteFramebuffers(1, &normalFBO);
+    glDeleteFramebuffers(1, &depthMap);
+    glDeleteFramebuffers(2, blurFBO); // Delete both FBOs in the array
 
     glfwTerminate();
     return 0;
