@@ -603,7 +603,6 @@ int main() {
     }
 
     // Clean up shaders as they are no longer necessary after linking
-    glDeleteShader(quadVertexShader);
     glDeleteShader(quadFragmentShader);
 
     // Compile the world-space normals vertex shader
@@ -703,6 +702,8 @@ int main() {
 
     // Clean up shaders as they are no longer necessary after linking
     glDeleteShader(verticalBlurFragmentShader);
+    // Delete quadVertex shader after it's been used by the other shaders above
+    glDeleteShader(quadVertexShader);
 
     /* FBO setup */
 
@@ -727,7 +728,7 @@ int main() {
     GLuint depthMap;
     glGenTextures(1, &depthMap);
     glBindTexture(GL_TEXTURE_2D, depthMap);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, WIDTH, HEIGHT, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT32, WIDTH, HEIGHT, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
@@ -908,7 +909,7 @@ int main() {
         // === Blur Pass ===
         // Prepare for blur
         bool horizontal = true, first_iteration = true;
-        unsigned int amount = 15; // Number of blur passes
+        unsigned int amount = 10; // Number of blur passes
 
         for (unsigned int i = 0; i < amount; i++) {
             glBindFramebuffer(GL_FRAMEBUFFER, blurFBO[horizontal]);
