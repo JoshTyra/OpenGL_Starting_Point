@@ -473,6 +473,49 @@ GLuint loadTextureFromFile(const char* path, const std::string&) {
     return textureID;
 }
 
+void attachSharedDepthBuffer(GLuint framebuffer, GLuint depthMap) {
+    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthMap, 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0); // Unbind framebuffer after attaching depth
+}
+
+GLuint createFramebuffer(GLuint& colorTexture, GLenum format, int width, int height) {
+    GLuint framebuffer;
+    glGenFramebuffers(1, &framebuffer);
+    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+
+    glGenTextures(1, &colorTexture);
+    glBindTexture(GL_TEXTURE_2D, colorTexture);
+    glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, GL_RGB, GL_FLOAT, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, colorTexture, 0);
+
+    GLenum attachments[1] = { GL_COLOR_ATTACHMENT0 };
+    glDrawBuffers(1, attachments);
+
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+        std::cerr << "Framebuffer not complete!" << std::endl;
+    }
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0); // Unbind framebuffer after setup
+    return framebuffer;
+}
+
+struct Framebuffer {
+    GLuint framebuffer;
+    GLuint colorTexture;
+
+    Framebuffer(GLuint colorTextureFormat, int width, int height) {
+        framebuffer = createFramebuffer(colorTexture, colorTextureFormat, width, height);
+    }
+
+    void attachDepthBuffer(GLuint depthMap) {
+        attachSharedDepthBuffer(framebuffer, depthMap);
+    }
+};
+
+
 int main() {
     // Initialize GLFW
     if (!glfwInit()) {
@@ -707,24 +750,7 @@ int main() {
 
     /* FBO setup */
 
-    // Create a framebuffer for the color pass
-    GLuint colorFBO;
-    glGenFramebuffers(1, &colorFBO);
-    glBindFramebuffer(GL_FRAMEBUFFER, colorFBO);
-
-    // Create a texture for the color attachment (color pass)
-    GLuint colorMap;
-    glGenTextures(1, &colorMap);
-    glBindTexture(GL_TEXTURE_2D, colorMap);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, WIDTH, HEIGHT, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    // Attach colorMap to colorFBO
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, colorMap, 0);
-
-    // Create the shared depth texture
+    // Create depth texture
     GLuint depthMap;
     glGenTextures(1, &depthMap);
     glBindTexture(GL_TEXTURE_2D, depthMap);
@@ -732,78 +758,19 @@ int main() {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
-    // Attach depthMap to colorFBO
-    glBindFramebuffer(GL_FRAMEBUFFER, colorFBO);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthMap, 0);
+    // Create framebuffers
+    Framebuffer colorPass(GL_RGB, WIDTH, HEIGHT);
+    Framebuffer normalPass(GL_RGB16F, WIDTH, HEIGHT);
+    Framebuffer glowPass(GL_RGB, WIDTH, HEIGHT);
 
-    // Create a framebuffer for the normal pass
-    GLuint normalFBO;
-    glGenFramebuffers(1, &normalFBO);
-    glBindFramebuffer(GL_FRAMEBUFFER, normalFBO);
+    // Attach shared depth buffer to each framebuffer
+    colorPass.attachDepthBuffer(depthMap);
+    normalPass.attachDepthBuffer(depthMap);
+    glowPass.attachDepthBuffer(depthMap);
 
-    // Create a texture for the normal attachment
-    GLuint normalMap;
-    glGenTextures(1, &normalMap);
-    glBindTexture(GL_TEXTURE_2D, normalMap);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, WIDTH, HEIGHT, 0, GL_RGB, GL_FLOAT, NULL);  // 16-bit float for normals
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, normalMap, 0);
-
-    // Attach shared depthMap to normalFBO
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthMap, 0);
-
-    // Check if framebuffer is complete
-    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
-        std::cerr << "Normal framebuffer is not complete!" << std::endl;
-
-    // Create and set up glowFBO
-    GLuint glowFBO, glowTexture;
-    glGenFramebuffers(1, &glowFBO);
-    glBindFramebuffer(GL_FRAMEBUFFER, glowFBO);
-
-    glGenTextures(1, &glowTexture);
-    glBindTexture(GL_TEXTURE_2D, glowTexture);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, WIDTH, HEIGHT, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, glowTexture, 0);
-
-    // Attach the shared depthMap to glowFBO
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthMap, 0);
-
-    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
-        std::cerr << "Error setting up glow FBO!" << std::endl;
-
-    // Set the list of draw buffers to use
-    GLenum attachments[1] = { GL_COLOR_ATTACHMENT0 };
-    glDrawBuffers(1, attachments);
-
-    // Check if framebuffer is complete
-    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
-        std::cerr << "Glow framebuffer is not complete!" << std::endl;
-
-    GLuint blurFBO[2];
-    GLuint blurTexture[2];
-    glGenFramebuffers(2, blurFBO);
-    glGenTextures(2, blurTexture);
-
-    for (unsigned int i = 0; i < 2; i++) {
-        glBindFramebuffer(GL_FRAMEBUFFER, blurFBO[i]);
-        glBindTexture(GL_TEXTURE_2D, blurTexture[i]);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, WIDTH, HEIGHT, 0, GL_RGB, GL_FLOAT, NULL);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, blurTexture[i], 0);
-
-        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
-            std::cerr << "Blur framebuffer is not complete!" << std::endl;
-    }
-
-    // Unbind framebuffer
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    // Create blur framebuffers for glow effect
+    Framebuffer blurPass1(GL_RGB16F, WIDTH, HEIGHT);
+    Framebuffer blurPass2(GL_RGB16F, WIDTH, HEIGHT);
 
     GLuint noiseTexture;
     glGenTextures(1, &noiseTexture);
@@ -864,7 +831,7 @@ int main() {
 
         // ========== First Pass: Regular Forward Rendering ==========
         // Render the scene to the color FBO (Main Scene)
-        glBindFramebuffer(GL_FRAMEBUFFER, colorFBO);
+        glBindFramebuffer(GL_FRAMEBUFFER, colorPass.framebuffer);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         // Use the regular shader program
@@ -887,7 +854,7 @@ int main() {
 
         // ========== Second Pass: Glow Rendering ==========
         // Bind the glow FBO and render only the glowing objects
-        glBindFramebuffer(GL_FRAMEBUFFER, glowFBO);
+        glBindFramebuffer(GL_FRAMEBUFFER, glowPass.framebuffer);
         glClear(GL_COLOR_BUFFER_BIT); // Do not clear depth buffer
 
         // Set depth function to GL_LEQUAL to allow fragments with depth values equal to the depth buffer to pass
@@ -906,13 +873,12 @@ int main() {
         // Unbind the framebuffer
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
-        // === Blur Pass ===
-        // Prepare for blur
+        // Blur pass - horizontal and vertical blur
         bool horizontal = true, first_iteration = true;
         unsigned int amount = 10; // Number of blur passes
 
         for (unsigned int i = 0; i < amount; i++) {
-            glBindFramebuffer(GL_FRAMEBUFFER, blurFBO[horizontal]);
+            glBindFramebuffer(GL_FRAMEBUFFER, horizontal ? blurPass1.framebuffer : blurPass2.framebuffer);
             glClear(GL_COLOR_BUFFER_BIT);
 
             // Switch shaders and set uniforms
@@ -932,7 +898,7 @@ int main() {
             }
 
             glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, first_iteration ? glowTexture : blurTexture[!horizontal]);
+            glBindTexture(GL_TEXTURE_2D, first_iteration ? glowPass.colorTexture : (horizontal ? blurPass2.colorTexture : blurPass1.colorTexture));
 
             glBindVertexArray(quadVAO);
             glDrawArrays(GL_TRIANGLES, 0, 6);
@@ -942,8 +908,11 @@ int main() {
                 first_iteration = false;
         }
 
+        // Unbind framebuffer
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
         // ========== Third Pass: World-Space Normals Rendering ==========
-        glBindFramebuffer(GL_FRAMEBUFFER, normalFBO);
+        glBindFramebuffer(GL_FRAMEBUFFER, normalPass.framebuffer);
         if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
             std::cerr << "Normal framebuffer is not complete!" << std::endl;
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);  // Clear both color and depth buffers
@@ -1018,11 +987,11 @@ int main() {
 
         // Bind the textures for the quad (color, normal, depth)
         glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, colorMap);
+        glBindTexture(GL_TEXTURE_2D, colorPass.colorTexture);
         glUniform1i(glGetUniformLocation(quadShaderProgram, "colorMap"), 0);
 
         glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, normalMap);  // Normal map from G-buffer
+        glBindTexture(GL_TEXTURE_2D, normalPass.colorTexture);  // Normal map from G-buffer
         glUniform1i(glGetUniformLocation(quadShaderProgram, "normalMap"), 1);
 
         glActiveTexture(GL_TEXTURE2);
@@ -1030,12 +999,18 @@ int main() {
         glUniform1i(glGetUniformLocation(quadShaderProgram, "depthMap"), 2);
 
         glActiveTexture(GL_TEXTURE3);
-        glBindTexture(GL_TEXTURE_2D, glowTexture);  // Glow buffer
+        glBindTexture(GL_TEXTURE_2D, glowPass.colorTexture);  // Glow buffer
         glUniform1i(glGetUniformLocation(quadShaderProgram, "glowTexture"), 3);
 
         glActiveTexture(GL_TEXTURE4);
-        glBindTexture(GL_TEXTURE_2D, blurTexture[!horizontal]);  // Use the final blurred glow texture
-        glUniform1i(glGetUniformLocation(quadShaderProgram, "blurredGlowTexture"), 4);
+        glBindTexture(GL_TEXTURE_2D, blurPass2.colorTexture);
+        GLint blurredGlowLoc = glGetUniformLocation(quadShaderProgram, "blurredGlowTexture");
+        if (blurredGlowLoc != -1) {
+            glUniform1i(blurredGlowLoc, 4);
+        }
+        else {
+            std::cerr << "Uniform 'blurredGlowTexture' not found in shader program." << std::endl;
+        }
 
         // Render the quad (fullscreen post-processing pass)
         glBindVertexArray(quadVAO);
@@ -1057,10 +1032,7 @@ int main() {
     glDeleteProgram(verticalBlurShaderProgram);
     glDeleteVertexArrays(1, &quadVAO);
     glDeleteBuffers(1, &quadVBO);
-    glDeleteFramebuffers(1, &colorFBO);
-    glDeleteFramebuffers(1, &normalFBO);
     glDeleteFramebuffers(1, &depthMap);
-    glDeleteFramebuffers(2, blurFBO); // Delete both FBOs in the array
 
     glfwTerminate();
     return 0;
