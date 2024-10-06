@@ -107,6 +107,7 @@ const char* quadFragmentShaderSource = R"(
     uniform sampler2D depthMap;      // The depth buffer
     uniform sampler2D glowTexture;   // The glow buffer
     uniform sampler2D blurredGlowTexture; // The blurred glow buffer
+    uniform sampler2D positionTexture; // The position buffer
     uniform int debugMode;           // Debug mode to switch between different G-buffer outputs
 
     uniform vec3 fogColor;           // Fog color
@@ -128,27 +129,27 @@ const char* quadFragmentShaderSource = R"(
     }
 
     void main() {
-   if (debugMode == 0) {
-        // Sample color and depth from textures
-        vec3 sceneColor = texture(colorMap, TexCoords).rgb;
-        float depth = texture(depthMap, TexCoords).r;
+       if (debugMode == 0) {
+            // Sample color and depth from textures
+            vec3 sceneColor = texture(colorMap, TexCoords).rgb;
+            float depth = texture(depthMap, TexCoords).r;
 
-        // Linearize the depth value and calculate fog factor
-        float linearDepth = LinearizeDepth(depth); 
+            // Linearize the depth value and calculate fog factor
+            float linearDepth = LinearizeDepth(depth); 
 
-        // Exponential fog factor for smoother, more gradual fog
-        float fogFactor = CalculateExponentialFogFactor(linearDepth);
+            // Exponential fog factor for smoother, more gradual fog
+            float fogFactor = CalculateExponentialFogFactor(linearDepth);
 
-        // Blend scene color with fog color based on fog factor
-        vec3 finalColor = mix(fogColor, sceneColor, fogFactor);
+            // Blend scene color with fog color based on fog factor
+            vec3 finalColor = mix(fogColor, sceneColor, fogFactor);
 
-        // Sample the blurred glow texture
-        vec3 blurredGlow = texture(blurredGlowTexture, TexCoords).rgb;
+            // Sample the blurred glow texture
+            vec3 blurredGlow = texture(blurredGlowTexture, TexCoords).rgb;
 
-        // Combine the scene color with the blurred glow
-        finalColor += blurredGlow * bloomIntensity;
+            // Combine the scene color with the blurred glow
+            finalColor += blurredGlow * bloomIntensity;
 
-        FragColor = vec4(finalColor, 1.0);
+            FragColor = vec4(finalColor, 1.0);
 
         }else if (debugMode == 1) {
             // Display the world-space normal buffer
@@ -171,6 +172,9 @@ const char* quadFragmentShaderSource = R"(
         }else if (debugMode == 4) {
             // Render the blurred glow buffer
             FragColor = vec4(texture(blurredGlowTexture, TexCoords).rgb, 1.0);
+        }else if (debugMode == 5) {
+            // Render the position buffer
+            FragColor = vec4(texture(positionTexture, TexCoords).rgb, 1.0);
         }
     }
 )";
@@ -251,6 +255,34 @@ const char* VerticalblurfragmentShaderSource = R"(
         FragColor = result;
     }
 )";
+
+// Load and compile shaders for position pass
+const char* positionVertexShaderSource = R"(
+        #version 430 core
+        layout (location = 0) in vec3 aPos;
+        
+        uniform mat4 model;
+        uniform mat4 view;
+        uniform mat4 projection;
+
+        out vec3 FragPos;
+
+        void main() {
+            FragPos = vec3(model * vec4(aPos, 1.0));
+            gl_Position = projection * view * vec4(FragPos, 1.0);
+        }
+    )";
+
+const char* positionFragmentShaderSource = R"(
+        #version 430 core
+        layout (location = 0) out vec3 PositionColor;
+
+        in vec3 FragPos;
+
+        void main() {
+            PositionColor = FragPos;
+        }
+    )";
 
 void processInput(GLFWwindow* window) {
     if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
@@ -338,13 +370,17 @@ struct Mesh {
 
     void Draw(GLuint shaderProgram, bool glowPass) const {
         // Bind diffuse texture
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, diffuseTexture);
-        glUniform1i(glGetUniformLocation(shaderProgram, "diffuseTexture"), 0);
+        GLint diffuseLoc = glGetUniformLocation(shaderProgram, "diffuseTexture");
+        if (diffuseLoc != -1) {
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, diffuseTexture);
+            glUniform1i(diffuseLoc, 0);
+        }
 
+        GLint isGlowingLoc = glGetUniformLocation(shaderProgram, "isGlowing");
         if (glowPass) {
             if (isGlowing) {
-                glUniform1i(glGetUniformLocation(shaderProgram, "isGlowing"), 1);
+                if (isGlowingLoc != -1) glUniform1i(isGlowingLoc, 1);
             }
             else {
                 // Skip non-glowing materials in the glow pass
@@ -352,11 +388,10 @@ struct Mesh {
             }
         }
         else {
-            // Normal rendering pass: just bind the glow uniform
-            glUniform1i(glGetUniformLocation(shaderProgram, "isGlowing"), isGlowing ? 1 : 0);
+            if (isGlowingLoc != -1) glUniform1i(isGlowingLoc, isGlowing ? 1 : 0);
         }
 
-        // Bind VAO and draw the mesh (remove glUseProgram call)
+        // Bind VAO and draw the mesh
         glBindVertexArray(VAO);
         glDrawElements(GL_TRIANGLES, indices.size(), GL_UNSIGNED_INT, 0);
         glBindVertexArray(0);
@@ -748,6 +783,40 @@ int main() {
     // Delete quadVertex shader after it's been used by the other shaders above
     glDeleteShader(quadVertexShader);
 
+    GLuint positionVertexShader = glCreateShader(GL_VERTEX_SHADER);
+    glShaderSource(positionVertexShader, 1, &positionVertexShaderSource, NULL);
+    glCompileShader(positionVertexShader);
+
+    glGetShaderiv(positionVertexShader, GL_COMPILE_STATUS, &success);
+    if (!success) {
+        glGetShaderInfoLog(positionVertexShader, 512, NULL, infoLog);
+        std::cerr << "ERROR::SHADER::POSITION_VERTEX::COMPILATION_FAILED\n" << infoLog << std::endl;
+    }
+
+    GLuint positionFragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(positionFragmentShader, 1, &positionFragmentShaderSource, NULL);
+    glCompileShader(positionFragmentShader);
+
+    glGetShaderiv(positionFragmentShader, GL_COMPILE_STATUS, &success);
+    if (!success) {
+        glGetShaderInfoLog(positionFragmentShader, 512, NULL, infoLog);
+        std::cerr << "ERROR::SHADER::POSITION_FRAGMENT::COMPILATION_FAILED\n" << infoLog << std::endl;
+    }
+
+    GLuint positionShaderProgram = glCreateProgram();
+    glAttachShader(positionShaderProgram, positionVertexShader);
+    glAttachShader(positionShaderProgram, positionFragmentShader);
+    glLinkProgram(positionShaderProgram);
+
+    glGetProgramiv(positionShaderProgram, GL_LINK_STATUS, &success);
+    if (!success) {
+        glGetProgramInfoLog(positionShaderProgram, 512, NULL, infoLog);
+        std::cerr << "ERROR::SHADER::POSITION_PROGRAM::LINKING_FAILED\n" << infoLog << std::endl;
+    }
+
+    glDeleteShader(positionVertexShader);
+    glDeleteShader(positionFragmentShader);
+
     /* FBO setup */
 
     // Create depth texture
@@ -762,11 +831,13 @@ int main() {
     Framebuffer colorPass(GL_RGB, WIDTH, HEIGHT);
     Framebuffer normalPass(GL_RGB16F, WIDTH, HEIGHT);
     Framebuffer glowPass(GL_RGB, WIDTH, HEIGHT);
+    Framebuffer positionPass(GL_RGB32F, WIDTH, HEIGHT);
 
     // Attach shared depth buffer to each framebuffer
     colorPass.attachDepthBuffer(depthMap);
     normalPass.attachDepthBuffer(depthMap);
     glowPass.attachDepthBuffer(depthMap);
+    positionPass.attachDepthBuffer(depthMap);
 
     // Create blur framebuffers for glow effect
     Framebuffer blurPass1(GL_RGB16F, WIDTH, HEIGHT);
@@ -873,6 +944,24 @@ int main() {
         // Unbind the framebuffer
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
+        // Render to position pass framebuffer
+        glBindFramebuffer(GL_FRAMEBUFFER, positionPass.framebuffer);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        glUseProgram(positionShaderProgram);
+
+        glUniformMatrix4fv(glGetUniformLocation(positionShaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
+        glUniformMatrix4fv(glGetUniformLocation(positionShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+
+        // Render all objects using the position shader program
+        for (const auto& mesh : meshes) {
+            glm::mat4 model = glm::mat4(1.0f);
+            glUniformMatrix4fv(glGetUniformLocation(positionShaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(model));
+            mesh.Draw(positionShaderProgram, false);  // Use positionShaderProgram here
+        }
+
+        // Unbind framebuffer
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
         // Blur pass - horizontal and vertical blur
         bool horizontal = true, first_iteration = true;
         unsigned int amount = 10; // Number of blur passes
@@ -961,10 +1050,15 @@ int main() {
             debugMode = 4;  // Show glow buffer
             keyPressed = true;
         }
+        else if (glfwGetKey(window, GLFW_KEY_6) == GLFW_PRESS && !keyPressed) {
+            debugMode = 5;  // Show position buffer
+            keyPressed = true;
+        }
 
         // Reset keyPressed state when the keys are released
         if (glfwGetKey(window, GLFW_KEY_1) == GLFW_RELEASE && glfwGetKey(window, GLFW_KEY_2) == GLFW_RELEASE &&
-            glfwGetKey(window, GLFW_KEY_3) == GLFW_RELEASE && glfwGetKey(window, GLFW_KEY_4) == GLFW_RELEASE) {
+            glfwGetKey(window, GLFW_KEY_3) == GLFW_RELEASE && glfwGetKey(window, GLFW_KEY_4) == GLFW_RELEASE && 
+            glfwGetKey(window, GLFW_KEY_5) == GLFW_RELEASE && glfwGetKey(window, GLFW_KEY_6) == GLFW_RELEASE) {
             keyPressed = false;
         }
 
@@ -985,22 +1079,46 @@ int main() {
         glUniform1f(glGetUniformLocation(quadShaderProgram, "far"), camera.getFarPlane());  // Far plane
         glUniform1f(glGetUniformLocation(quadShaderProgram, "bloomIntensity"), 2.0f); // Adjust as needed
 
-        // Bind the textures for the quad (color, normal, depth)
+        // Bind the textures for the quad (color, normal, depth, glow, blurred glow, position)
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, colorPass.colorTexture);
-        glUniform1i(glGetUniformLocation(quadShaderProgram, "colorMap"), 0);
+        GLint colorMapLoc = glGetUniformLocation(quadShaderProgram, "colorMap");
+        if (colorMapLoc != -1) {
+            glUniform1i(colorMapLoc, 0);
+        }
+        else {
+            std::cerr << "Uniform 'colorMap' not found in shader program." << std::endl;
+        }
 
         glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, normalPass.colorTexture);  // Normal map from G-buffer
-        glUniform1i(glGetUniformLocation(quadShaderProgram, "normalMap"), 1);
+        glBindTexture(GL_TEXTURE_2D, normalPass.colorTexture);
+        GLint normalMapLoc = glGetUniformLocation(quadShaderProgram, "normalMap");
+        if (normalMapLoc != -1) {
+            glUniform1i(normalMapLoc, 1);
+        }
+        else {
+            std::cerr << "Uniform 'normalMap' not found in shader program." << std::endl;
+        }
 
         glActiveTexture(GL_TEXTURE2);
-        glBindTexture(GL_TEXTURE_2D, depthMap);  // Depth map
-        glUniform1i(glGetUniformLocation(quadShaderProgram, "depthMap"), 2);
+        glBindTexture(GL_TEXTURE_2D, depthMap);
+        GLint depthMapLoc = glGetUniformLocation(quadShaderProgram, "depthMap");
+        if (depthMapLoc != -1) {
+            glUniform1i(depthMapLoc, 2);
+        }
+        else {
+            std::cerr << "Uniform 'depthMap' not found in shader program." << std::endl;
+        }
 
         glActiveTexture(GL_TEXTURE3);
-        glBindTexture(GL_TEXTURE_2D, glowPass.colorTexture);  // Glow buffer
-        glUniform1i(glGetUniformLocation(quadShaderProgram, "glowTexture"), 3);
+        glBindTexture(GL_TEXTURE_2D, glowPass.colorTexture);
+        GLint glowTextureLoc = glGetUniformLocation(quadShaderProgram, "glowTexture");
+        if (glowTextureLoc != -1) {
+            glUniform1i(glowTextureLoc, 3);
+        }
+        else {
+            std::cerr << "Uniform 'glowTexture' not found in shader program." << std::endl;
+        }
 
         glActiveTexture(GL_TEXTURE4);
         glBindTexture(GL_TEXTURE_2D, blurPass2.colorTexture);
@@ -1010,6 +1128,16 @@ int main() {
         }
         else {
             std::cerr << "Uniform 'blurredGlowTexture' not found in shader program." << std::endl;
+        }
+
+        glActiveTexture(GL_TEXTURE5);
+        glBindTexture(GL_TEXTURE_2D, positionPass.colorTexture);
+        GLint positionTextureLoc = glGetUniformLocation(quadShaderProgram, "positionTexture");
+        if (positionTextureLoc != -1) {
+            glUniform1i(positionTextureLoc, 5);
+        }
+        else {
+            std::cerr << "Uniform 'positionTexture' not found in shader program." << std::endl;
         }
 
         // Render the quad (fullscreen post-processing pass)
