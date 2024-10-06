@@ -8,6 +8,7 @@
 #include <iostream>
 #include "Camera.h"
 #include "FileSystemUtils.h"
+#include <random>
 
 // Asset Importer
 #include <assimp/Importer.hpp>
@@ -98,38 +99,39 @@ const char* quadVertexShaderSource = R"(
 )";
 
 const char* quadFragmentShaderSource = R"(
-    #version 430 core
-    out vec4 FragColor;
-    in vec2 TexCoords;
+        #version 430 core
+        out vec4 FragColor;
+        in vec2 TexCoords;
 
-    uniform sampler2D colorMap;      // The color buffer (final scene color)
-    uniform sampler2D normalMap;     // The world-space normal buffer
-    uniform sampler2D depthMap;      // The depth buffer
-    uniform sampler2D glowTexture;   // The glow buffer
-    uniform sampler2D blurredGlowTexture; // The blurred glow buffer
-    uniform sampler2D positionTexture; // The position buffer
-    uniform int debugMode;           // Debug mode to switch between different G-buffer outputs
+        uniform sampler2D colorMap;      // The color buffer (final scene color)
+        uniform sampler2D normalMap;     // The world-space normal buffer
+        uniform sampler2D depthMap;      // The depth buffer
+        uniform sampler2D glowTexture;   // The glow buffer
+        uniform sampler2D blurredGlowTexture; // The blurred glow buffer
+        uniform sampler2D positionTexture; // The position buffer
+        uniform sampler2D ssaoTexture;  // The ssao buffer 
+        uniform int debugMode;           // Debug mode to switch between different G-buffer outputs
 
-    uniform vec3 fogColor;           // Fog color
-    uniform float near;              // Near plane
-    uniform float far;               // Far plane
-    uniform float fogDensity;        // Fog density for exponential fog
-    uniform float fogStart;          // Start distance for fog
-    uniform float fogEnd;            // End distance for fog
-    uniform float bloomIntensity;    // Bloom intensity
+        uniform vec3 fogColor;           // Fog color
+        uniform float near;              // Near plane
+        uniform float far;               // Far plane
+        uniform float fogDensity;        // Fog density for exponential fog
+        uniform float fogStart;          // Start distance for fog
+        uniform float fogEnd;            // End distance for fog
+        uniform float bloomIntensity;    // Bloom intensity
 
-    float LinearizeDepth(float depth) {
-        float z = depth * 2.0 - 1.0;  // Back to NDC
-        return (2.0 * near * far) / (far + near - z * (far - near));
-    }
+        float LinearizeDepth(float depth) {
+            float z = depth * 2.0 - 1.0;  // Back to NDC
+            return (2.0 * near * far) / (far + near - z * (far - near));
+        }
 
-    float CalculateExponentialFogFactor(float depth) {
-        float fogFactor = exp(-depth * fogDensity); // Exponential decay based on depth
-        return clamp(fogFactor, 0.0, 1.0);         // Ensure values are between 0 and 1
-    }
+        float CalculateExponentialFogFactor(float depth) {
+            float fogFactor = exp(-depth * fogDensity); // Exponential decay based on depth
+            return clamp(fogFactor, 0.0, 1.0);         // Ensure values are between 0 and 1
+        }
 
-    void main() {
-       if (debugMode == 0) {
+        void main() {
+           if (debugMode == 0) {
             // Sample color and depth from textures
             vec3 sceneColor = texture(colorMap, TexCoords).rgb;
             float depth = texture(depthMap, TexCoords).r;
@@ -140,8 +142,14 @@ const char* quadFragmentShaderSource = R"(
             // Exponential fog factor for smoother, more gradual fog
             float fogFactor = CalculateExponentialFogFactor(linearDepth);
 
-            // Blend scene color with fog color based on fog factor
-            vec3 finalColor = mix(fogColor, sceneColor, fogFactor);
+            // Sample the ssaoTexture
+            float ssao = texture(ssaoTexture, TexCoords).r;
+
+            // Apply SSAO to the scene color
+            vec3 occludedColor = sceneColor * ssao;
+
+            // Blend occluded color with fog color based on fog factor
+            vec3 finalColor = mix(fogColor, occludedColor, fogFactor);
 
             // Sample the blurred glow texture
             vec3 blurredGlow = texture(blurredGlowTexture, TexCoords).rgb;
@@ -150,7 +158,6 @@ const char* quadFragmentShaderSource = R"(
             finalColor += blurredGlow * bloomIntensity;
 
             FragColor = vec4(finalColor, 1.0);
-
         }else if (debugMode == 1) {
             // Display the world-space normal buffer
             vec3 normal = texture(normalMap, TexCoords).rgb;
@@ -175,38 +182,42 @@ const char* quadFragmentShaderSource = R"(
         }else if (debugMode == 5) {
             // Render the position buffer
             FragColor = vec4(texture(positionTexture, TexCoords).rgb, 1.0);
+        }else if (debugMode == 6) {
+            // Render the ssao buffer
+            float ssao = texture(ssaoTexture, TexCoords).r;
+            FragColor = vec4(vec3(ssao), 1.0);  // Convert the SSAO value to a grayscale color
         }
     }
 )";
 
+// World-Space Normals Vertex Shader Source Code
 const char* worldspaceNormalsVertexShaderSource = R"(
     #version 430 core
     layout (location = 0) in vec3 aPos;
     layout (location = 1) in vec3 aNormal;
 
-    out vec3 FragPos;    // Pass world position to fragment shader
-    out vec3 Normal;     // Pass world normal to fragment shader
+    out vec3 Normal;     // Pass view-space normal to fragment shader
 
     uniform mat4 model;
     uniform mat4 view;
     uniform mat4 projection;
 
     void main() {
-        FragPos = vec3(model * vec4(aPos, 1.0));  // Calculate world-space position
-        Normal = mat3(transpose(inverse(model))) * aNormal;  // Transform normal to world space
-        gl_Position = projection * view * vec4(FragPos, 1.0);
+        mat3 normalMatrix = transpose(inverse(mat3(view * model)));
+        Normal = normalize(normalMatrix * aNormal);  // Transform normal to view space
+        gl_Position = projection * view * model * vec4(aPos, 1.0);
     }
 )";
 
+// World-Space Normals Fragment Shader Source Code
 const char* worldspaceNormalsFragmentShaderSource = R"(
     #version 430 core
-    layout(location = 0) out vec3 NormalColor;    // For the world-space normal buffer
+    layout(location = 0) out vec3 NormalColor;
 
-    in vec3 FragPos;
     in vec3 Normal;
 
     void main() {
-        NormalColor = normalize(Normal);  // Output normalized world-space normal
+        NormalColor = normalize(Normal); // Output normalized view-space normal
     }
 )";
 
@@ -256,33 +267,99 @@ const char* VerticalblurfragmentShaderSource = R"(
     }
 )";
 
-// Load and compile shaders for position pass
+// Position Vertex Shader Source Code
 const char* positionVertexShaderSource = R"(
-        #version 430 core
-        layout (location = 0) in vec3 aPos;
-        
-        uniform mat4 model;
-        uniform mat4 view;
-        uniform mat4 projection;
+    #version 430 core
+    layout (location = 0) in vec3 aPos;
 
-        out vec3 FragPos;
+    uniform mat4 model;
+    uniform mat4 view;
+    uniform mat4 projection;
 
-        void main() {
-            FragPos = vec3(model * vec4(aPos, 1.0));
-            gl_Position = projection * view * vec4(FragPos, 1.0);
-        }
-    )";
+    out vec3 FragPos;
 
+    void main() {
+        vec4 worldPos = model * vec4(aPos, 1.0);
+        FragPos = vec3(view * worldPos); // Transform to view space
+        gl_Position = projection * view * vec4(aPos, 1.0);
+    }
+)";
+
+// Position Fragment Shader Source Code
 const char* positionFragmentShaderSource = R"(
-        #version 430 core
-        layout (location = 0) out vec3 PositionColor;
+    #version 430 core
+    layout (location = 0) out vec3 PositionColor;
 
-        in vec3 FragPos;
+    in vec3 FragPos;
 
-        void main() {
-            PositionColor = FragPos;
+    void main() {
+        PositionColor = FragPos; // Store positions in view space
+    }
+)";
+
+// SSAO Vertex Shader Source Code
+const char* ssaoVertexShaderSource = R"(
+    #version 430 core
+    layout (location = 0) in vec2 aPos;
+    layout (location = 1) in vec2 aTexCoords;
+
+    out vec2 TexCoords;
+
+    void main() {
+        TexCoords = aTexCoords;
+        gl_Position = vec4(aPos, 0.0, 1.0);
+    }
+)";
+
+// SSAO Fragment Shader Source Code
+const char* ssaoFragmentShaderSource = R"(
+    #version 430 core
+    layout(location = 0) out float FragColor;
+
+    in vec2 TexCoords;
+
+    uniform sampler2D positionTexture;
+    uniform sampler2D normalTexture;
+    uniform sampler2D noiseTexture;
+    uniform vec3 samples[16];
+    uniform vec2 noiseScale;
+    uniform mat4 projection;
+
+    uniform float radius;
+    uniform float bias;
+
+    void main() {
+        vec3 fragPos = texture(positionTexture, TexCoords).rgb;
+        vec3 normal = normalize(texture(normalTexture, TexCoords).rgb);
+        vec3 randomVec = normalize(texture(noiseTexture, TexCoords * noiseScale).xyz);
+
+        // Create TBN matrix
+        vec3 tangent = normalize(randomVec - normal * dot(randomVec, normal));
+        vec3 bitangent = cross(normal, tangent);
+        mat3 TBN = mat3(tangent, bitangent, normal);
+
+        // Accumulate occlusion
+        float occlusion = 0.0;
+        for (int i = 0; i < 16; ++i) {
+            // Sample position in view space
+            vec3 samplePos = fragPos + TBN * samples[i] * radius;
+
+            // Project sample position (only projection matrix since positions are in view space)
+            vec4 offset = projection * vec4(samplePos, 1.0);
+            offset.xyz /= offset.w;
+            offset.xyz = offset.xyz * 0.5 + 0.5;
+
+            // Get depth value of sample position
+            float sampleDepth = texture(positionTexture, offset.xy).z;
+
+            // Range check and accumulate occlusion
+            float rangeCheck = smoothstep(0.0, 1.0, radius / abs(fragPos.z - sampleDepth));
+            occlusion += (sampleDepth >= samplePos.z + bias ? 1.0 : 0.0) * rangeCheck;
         }
-    )";
+        occlusion = 1.0 - (occlusion / 16.0);
+        FragColor = occlusion;
+    }
+)";
 
 void processInput(GLFWwindow* window) {
     if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
@@ -514,14 +591,14 @@ void attachSharedDepthBuffer(GLuint framebuffer, GLuint depthMap) {
     glBindFramebuffer(GL_FRAMEBUFFER, 0); // Unbind framebuffer after attaching depth
 }
 
-GLuint createFramebuffer(GLuint& colorTexture, GLenum format, int width, int height) {
+GLuint createFramebuffer(GLuint& colorTexture, GLenum internalFormat, GLenum format, GLenum type, int width, int height) {
     GLuint framebuffer;
     glGenFramebuffers(1, &framebuffer);
     glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
 
     glGenTextures(1, &colorTexture);
     glBindTexture(GL_TEXTURE_2D, colorTexture);
-    glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, GL_RGB, GL_FLOAT, NULL);
+    glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, width, height, 0, format, type, NULL);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, colorTexture, 0);
@@ -541,8 +618,8 @@ struct Framebuffer {
     GLuint framebuffer;
     GLuint colorTexture;
 
-    Framebuffer(GLuint colorTextureFormat, int width, int height) {
-        framebuffer = createFramebuffer(colorTexture, colorTextureFormat, width, height);
+    Framebuffer(GLenum internalFormat, GLenum format, GLenum type, int width, int height) {
+        framebuffer = createFramebuffer(colorTexture, internalFormat, format, type, width, height);
     }
 
     void attachDepthBuffer(GLuint depthMap) {
@@ -817,6 +894,39 @@ int main() {
     glDeleteShader(positionVertexShader);
     glDeleteShader(positionFragmentShader);
 
+    // SSAO Shader Program
+    GLuint ssaoVertexShader = glCreateShader(GL_VERTEX_SHADER);
+    glShaderSource(ssaoVertexShader, 1, &ssaoVertexShaderSource, NULL);
+    glCompileShader(ssaoVertexShader);
+
+    glGetShaderiv(ssaoVertexShader, GL_COMPILE_STATUS, &success);
+    if (!success) {
+        glGetShaderInfoLog(ssaoVertexShader, 512, NULL, infoLog);
+        std::cerr << "ERROR::SHADER::SSAO_VERTEX::COMPILATION_FAILED" << infoLog << std::endl;
+    }
+
+    GLuint ssaoFragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(ssaoFragmentShader, 1, &ssaoFragmentShaderSource, NULL);
+    glCompileShader(ssaoFragmentShader);
+
+    glGetShaderiv(ssaoFragmentShader, GL_COMPILE_STATUS, &success);
+    if (!success) {
+        glGetShaderInfoLog(ssaoFragmentShader, 512, NULL, infoLog);
+        std::cerr << "ERROR::SHADER::SSAO_FRAGMENT::COMPILATION_FAILED" << infoLog << std::endl;
+    }
+    GLuint ssaoShaderProgram = glCreateProgram();
+    glAttachShader(ssaoShaderProgram, ssaoVertexShader);
+    glAttachShader(ssaoShaderProgram, ssaoFragmentShader);
+    glLinkProgram(ssaoShaderProgram);
+    glGetProgramiv(ssaoShaderProgram, GL_LINK_STATUS, &success);
+    if (!success) {
+        glGetProgramInfoLog(ssaoShaderProgram, 512, NULL, infoLog);
+        std::cerr << "ERROR::PROGRAM::SSAO_SHADER::LINKING_FAILED" << infoLog << std::endl;
+    }
+
+    glDeleteShader(ssaoVertexShader);
+    glDeleteShader(ssaoFragmentShader);
+
     /* FBO setup */
 
     // Create depth texture
@@ -827,21 +937,31 @@ int main() {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
-    // Create framebuffers
-    Framebuffer colorPass(GL_RGB, WIDTH, HEIGHT);
-    Framebuffer normalPass(GL_RGB16F, WIDTH, HEIGHT);
-    Framebuffer glowPass(GL_RGB, WIDTH, HEIGHT);
-    Framebuffer positionPass(GL_RGB32F, WIDTH, HEIGHT);
+    // Main Color Pass (Scene)
+    Framebuffer colorPass(GL_RGB8, GL_RGB, GL_UNSIGNED_BYTE, WIDTH, HEIGHT);
+
+    // Normal Pass
+    Framebuffer normalPass(GL_RGB16F, GL_RGB, GL_FLOAT, WIDTH, HEIGHT);
+
+    // Glow Pass
+    Framebuffer glowPass(GL_RGB8, GL_RGB, GL_UNSIGNED_BYTE, WIDTH, HEIGHT);
+
+    // Position Pass
+    Framebuffer positionPass(GL_RGB32F, GL_RGB, GL_FLOAT, WIDTH, HEIGHT);
+
+    // SSAO Pass (Note the use of GL_RED formats)
+    Framebuffer ssaoPass(GL_R16F, GL_RED, GL_FLOAT, WIDTH, HEIGHT);
+
+    // Blur Passes
+    Framebuffer blurPass1(GL_RGB16F, GL_RGB, GL_FLOAT, WIDTH, HEIGHT);
+    Framebuffer blurPass2(GL_RGB16F, GL_RGB, GL_FLOAT, WIDTH, HEIGHT);
+
 
     // Attach shared depth buffer to each framebuffer
     colorPass.attachDepthBuffer(depthMap);
     normalPass.attachDepthBuffer(depthMap);
     glowPass.attachDepthBuffer(depthMap);
     positionPass.attachDepthBuffer(depthMap);
-
-    // Create blur framebuffers for glow effect
-    Framebuffer blurPass1(GL_RGB16F, WIDTH, HEIGHT);
-    Framebuffer blurPass2(GL_RGB16F, WIDTH, HEIGHT);
 
     GLuint noiseTexture;
     glGenTextures(1, &noiseTexture);
@@ -887,6 +1007,45 @@ int main() {
     bool keyPressed = false;  // Track key press state
     // Gaussian weights for a 9-tap kernel (example values)
     float weight[5] = { 0.2270270270f, 0.1945945946f, 0.1216216216f, 0.0540540541f, 0.0162162162f };
+
+    // Generate sample kernel
+    std::vector<glm::vec3> ssaoKernel;
+    std::uniform_real_distribution<float> randomFloats(0.0, 1.0);
+    std::default_random_engine generator;
+    for (unsigned int i = 0; i < 16; ++i) {
+        glm::vec3 sample(
+            randomFloats(generator) * 2.0 - 1.0,
+            randomFloats(generator) * 2.0 - 1.0,
+            randomFloats(generator)
+        );
+        sample = glm::normalize(sample);
+        sample *= randomFloats(generator);
+        float scale = float(i) / 16.0;
+
+        // Scale samples so that they're more aligned to the center of the kernel
+        scale = glm::mix(0.1f, 1.0f, scale * scale);
+        sample *= scale;
+        ssaoKernel.push_back(sample);
+    }
+
+    // Generate noise texture
+    std::vector<glm::vec3> ssaoNoise;
+    for (unsigned int i = 0; i < 16; i++) {
+        glm::vec3 noise(
+            randomFloats(generator) * 2.0 - 1.0,
+            randomFloats(generator) * 2.0 - 1.0,
+            0.0f); // Rotate around z-axis (in tangent space)
+        ssaoNoise.push_back(noise);
+    }
+
+    GLuint ssaonoiseTexture;
+    glGenTextures(1, &ssaonoiseTexture);
+    glBindTexture(GL_TEXTURE_2D, ssaonoiseTexture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, 4, 4, 0, GL_RGB, GL_FLOAT, &ssaoNoise[0]);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
 
     // Render loop
     while (!glfwWindowShouldClose(window)) {
@@ -1024,6 +1183,50 @@ int main() {
         // Unbind the framebuffer after the second pass
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
+
+        // SSAO Pass
+        glBindFramebuffer(GL_FRAMEBUFFER, ssaoPass.framebuffer);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glUseProgram(ssaoShaderProgram);
+
+        // Set kernel samples
+        for (unsigned int i = 0; i < 16; ++i) {
+            std::string uniformName = "samples[" + std::to_string(i) + "]";
+            glUniform3fv(glGetUniformLocation(ssaoShaderProgram, uniformName.c_str()), 1, glm::value_ptr(ssaoKernel[i]));
+        }
+
+        // Set SSAO parameters
+        float radius = 0.5f;
+        float bias = 0.025f;
+        glUniform1f(glGetUniformLocation(ssaoShaderProgram, "radius"), radius);
+        glUniform1f(glGetUniformLocation(ssaoShaderProgram, "bias"), bias);
+
+        // Set uniforms and bind G-buffer textures
+        glUniform1i(glGetUniformLocation(ssaoShaderProgram, "positionTexture"), 0);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, positionPass.colorTexture);
+
+        glUniform1i(glGetUniformLocation(ssaoShaderProgram, "normalTexture"), 1);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, normalPass.colorTexture);
+
+        glUniform1i(glGetUniformLocation(ssaoShaderProgram, "noiseTexture"), 2);
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, ssaonoiseTexture);
+
+        // Set projection matrix
+        glUniformMatrix4fv(glGetUniformLocation(ssaoShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+
+        // Set noise scale
+        glm::vec2 noiseScale = glm::vec2((float)WIDTH / 4.0f, (float)HEIGHT / 4.0f);
+        glUniform2fv(glGetUniformLocation(ssaoShaderProgram, "noiseScale"), 1, glm::value_ptr(noiseScale));
+
+        // Render the full-screen quad
+        glBindVertexArray(quadVAO);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
         // ========== Fourth Pass: Post-Processing (e.g., SSAO, Debugging) ==========
         // Clear the screen and disable depth test for the quad
         glClear(GL_COLOR_BUFFER_BIT);
@@ -1054,11 +1257,16 @@ int main() {
             debugMode = 5;  // Show position buffer
             keyPressed = true;
         }
+        else if (glfwGetKey(window, GLFW_KEY_7) == GLFW_PRESS && !keyPressed) {
+            debugMode = 6;  // Show ssao buffer
+            keyPressed = true;
+        }
 
         // Reset keyPressed state when the keys are released
         if (glfwGetKey(window, GLFW_KEY_1) == GLFW_RELEASE && glfwGetKey(window, GLFW_KEY_2) == GLFW_RELEASE &&
             glfwGetKey(window, GLFW_KEY_3) == GLFW_RELEASE && glfwGetKey(window, GLFW_KEY_4) == GLFW_RELEASE && 
-            glfwGetKey(window, GLFW_KEY_5) == GLFW_RELEASE && glfwGetKey(window, GLFW_KEY_6) == GLFW_RELEASE) {
+            glfwGetKey(window, GLFW_KEY_5) == GLFW_RELEASE && glfwGetKey(window, GLFW_KEY_6) == GLFW_RELEASE && 
+            glfwGetKey(window, GLFW_KEY_7) == GLFW_RELEASE) {
             keyPressed = false;
         }
 
@@ -1138,6 +1346,16 @@ int main() {
         }
         else {
             std::cerr << "Uniform 'positionTexture' not found in shader program." << std::endl;
+        }
+
+        glActiveTexture(GL_TEXTURE6);
+        glBindTexture(GL_TEXTURE_2D, ssaoPass.colorTexture);
+        GLint ssaoTextureLoc = glGetUniformLocation(quadShaderProgram, "ssaoTexture");
+        if (ssaoTextureLoc != -1) {
+            glUniform1i(ssaoTextureLoc, 6);
+        }
+        else {
+            std::cerr << "Uniform 'ssaoTexture' not found in shader program." << std::endl;
         }
 
         // Render the quad (fullscreen post-processing pass)
