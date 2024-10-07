@@ -321,7 +321,7 @@ const char* ssaoFragmentShaderSource = R"(
     uniform sampler2D positionTexture;
     uniform sampler2D normalTexture;
     uniform sampler2D noiseTexture;
-    uniform vec3 samples[16];
+    uniform vec3 samples[32];
     uniform vec2 noiseScale;
     uniform mat4 projection;
 
@@ -340,7 +340,7 @@ const char* ssaoFragmentShaderSource = R"(
 
         // Accumulate occlusion
         float occlusion = 0.0;
-        for (int i = 0; i < 16; ++i) {
+        for (int i = 0; i < 32; ++i) {
             // Sample position in view space
             vec3 samplePos = fragPos + TBN * samples[i] * radius;
 
@@ -356,8 +356,52 @@ const char* ssaoFragmentShaderSource = R"(
             float rangeCheck = smoothstep(0.0, 1.0, radius / abs(fragPos.z - sampleDepth));
             occlusion += (sampleDepth >= samplePos.z + bias ? 1.0 : 0.0) * rangeCheck;
         }
-        occlusion = 1.0 - (occlusion / 16.0);
+        occlusion = 1.0 - (occlusion / 32.0);
         FragColor = occlusion;
+    }
+)";
+
+const char* ssaoHorizontalBlurFragmentShaderSource = R"(
+    #version 430 core
+    out float FragColor;
+    in vec2 TexCoords;
+
+    uniform sampler2D image;
+    uniform float weight[5];
+    uniform float texelOffsetX;
+
+    void main() {
+        vec2 texOffset = vec2(texelOffsetX, 0.0);
+        float result = texture(image, TexCoords).r * weight[0];
+
+        for (int i = 1; i < 5; ++i) {
+            result += texture(image, TexCoords + texOffset * float(i)).r * weight[i];
+            result += texture(image, TexCoords - texOffset * float(i)).r * weight[i];
+        }
+
+        FragColor = result;
+    }
+)";
+
+const char* ssaoVerticalBlurFragmentShaderSource = R"(
+    #version 430 core
+    out float FragColor;
+    in vec2 TexCoords;
+
+    uniform sampler2D image;
+    uniform float weight[5];
+    uniform float texelOffsetY;
+
+    void main() {
+        vec2 texOffset = vec2(0.0, texelOffsetY);
+        float result = texture(image, TexCoords).r * weight[0];
+
+        for (int i = 1; i < 5; ++i) {
+            result += texture(image, TexCoords + texOffset * float(i)).r * weight[i];
+            result += texture(image, TexCoords - texOffset * float(i)).r * weight[i];
+        }
+
+        FragColor = result;
     }
 )";
 
@@ -857,8 +901,6 @@ int main() {
 
     // Clean up shaders as they are no longer necessary after linking
     glDeleteShader(verticalBlurFragmentShader);
-    // Delete quadVertex shader after it's been used by the other shaders above
-    glDeleteShader(quadVertexShader);
 
     GLuint positionVertexShader = glCreateShader(GL_VERTEX_SHADER);
     glShaderSource(positionVertexShader, 1, &positionVertexShaderSource, NULL);
@@ -927,6 +969,48 @@ int main() {
     glDeleteShader(ssaoVertexShader);
     glDeleteShader(ssaoFragmentShader);
 
+    // Compile SSAO horizontal blur fragment shader
+    GLuint ssaoHorizontalBlurFragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(ssaoHorizontalBlurFragmentShader, 1, &ssaoHorizontalBlurFragmentShaderSource, NULL);
+    glCompileShader(ssaoHorizontalBlurFragmentShader);
+
+    // Check for shader compile errors
+    glGetShaderiv(ssaoHorizontalBlurFragmentShader, GL_COMPILE_STATUS, &success);
+    if (!success) {
+        glGetShaderInfoLog(ssaoHorizontalBlurFragmentShader, 512, NULL, infoLog);
+        std::cerr << "ERROR::SSAO_HORIZONTAL_BLUR_SHADER::FRAGMENT::COMPILATION_FAILED\n" << infoLog << std::endl;
+    }
+
+    // Link SSAO horizontal blur shader into a program
+    GLuint ssaoHorizontalBlurShaderProgram = glCreateProgram();
+    glAttachShader(ssaoHorizontalBlurShaderProgram, quadVertexShader); // Use the quad vertex shader
+    glAttachShader(ssaoHorizontalBlurShaderProgram, ssaoHorizontalBlurFragmentShader);
+    glLinkProgram(ssaoHorizontalBlurShaderProgram);
+
+    // Check for linking errors
+    glGetProgramiv(ssaoHorizontalBlurShaderProgram, GL_LINK_STATUS, &success);
+    if (!success) {
+        glGetProgramInfoLog(ssaoHorizontalBlurShaderProgram, 512, NULL, infoLog);
+        std::cerr << "ERROR::SSAO_HORIZONTAL_BLUR_SHADER::PROGRAM::LINKING_FAILED\n" << infoLog << std::endl;
+    }
+
+    // Clean up shaders
+    glDeleteShader(ssaoHorizontalBlurFragmentShader);
+
+    // Compile and link SSAO vertical blur shader similarly
+    GLuint ssaoVerticalBlurFragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(ssaoVerticalBlurFragmentShader, 1, &ssaoVerticalBlurFragmentShaderSource, NULL);
+    glCompileShader(ssaoVerticalBlurFragmentShader);
+    // Check for errors...
+    GLuint ssaoVerticalBlurShaderProgram = glCreateProgram();
+    glAttachShader(ssaoVerticalBlurShaderProgram, quadVertexShader);
+    glAttachShader(ssaoVerticalBlurShaderProgram, ssaoVerticalBlurFragmentShader);
+    glLinkProgram(ssaoVerticalBlurShaderProgram);
+    // Check for errors...
+    glDeleteShader(ssaoVerticalBlurFragmentShader);
+    // Delete quadVertex shader after it's been used by the other shaders above
+    glDeleteShader(quadVertexShader);
+
     /* FBO setup */
 
     // Create depth texture
@@ -951,6 +1035,10 @@ int main() {
 
     // SSAO Pass (Note the use of GL_RED formats)
     Framebuffer ssaoPass(GL_R16F, GL_RED, GL_FLOAT, WIDTH, HEIGHT);
+
+    // After creating ssaoPass
+    Framebuffer ssaoBlurPass1(GL_R16F, GL_RED, GL_FLOAT, WIDTH, HEIGHT);
+    Framebuffer ssaoBlurPass2(GL_R16F, GL_RED, GL_FLOAT, WIDTH, HEIGHT);
 
     // Blur Passes
     Framebuffer blurPass1(GL_RGB16F, GL_RGB, GL_FLOAT, WIDTH, HEIGHT);
@@ -1012,7 +1100,7 @@ int main() {
     std::vector<glm::vec3> ssaoKernel;
     std::uniform_real_distribution<float> randomFloats(0.0, 1.0);
     std::default_random_engine generator;
-    for (unsigned int i = 0; i < 16; ++i) {
+    for (unsigned int i = 0; i < 32; ++i) {
         glm::vec3 sample(
             randomFloats(generator) * 2.0 - 1.0,
             randomFloats(generator) * 2.0 - 1.0,
@@ -1020,7 +1108,7 @@ int main() {
         );
         sample = glm::normalize(sample);
         sample *= randomFloats(generator);
-        float scale = float(i) / 16.0;
+        float scale = float(i) / 32.0;
 
         // Scale samples so that they're more aligned to the center of the kernel
         scale = glm::mix(0.1f, 1.0f, scale * scale);
@@ -1190,7 +1278,7 @@ int main() {
         glUseProgram(ssaoShaderProgram);
 
         // Set kernel samples
-        for (unsigned int i = 0; i < 16; ++i) {
+        for (unsigned int i = 0; i < 32; ++i) {
             std::string uniformName = "samples[" + std::to_string(i) + "]";
             glUniform3fv(glGetUniformLocation(ssaoShaderProgram, uniformName.c_str()), 1, glm::value_ptr(ssaoKernel[i]));
         }
@@ -1226,6 +1314,45 @@ int main() {
         glDrawArrays(GL_TRIANGLES, 0, 6);
 
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+        // Blur SSAO texture - horizontal and vertical blur
+        bool ssaoHorizontal = true, ssaoFirst_iteration = true;
+        unsigned int ssaoBlurAmount = 2; // Number of blur passes for SSAO
+
+        for (unsigned int i = 0; i < ssaoBlurAmount; i++) {
+            glBindFramebuffer(GL_FRAMEBUFFER, ssaoHorizontal ? ssaoBlurPass1.framebuffer : ssaoBlurPass2.framebuffer);
+            glClear(GL_COLOR_BUFFER_BIT);
+
+            // Switch shaders and set uniforms
+            if (ssaoHorizontal) {
+                glUseProgram(ssaoHorizontalBlurShaderProgram);
+                glUniform1fv(glGetUniformLocation(ssaoHorizontalBlurShaderProgram, "weight"), 5, weight);
+                glUniform1f(glGetUniformLocation(ssaoHorizontalBlurShaderProgram, "texelOffsetX"), 1.0f / WIDTH);
+                glUniform1i(glGetUniformLocation(ssaoHorizontalBlurShaderProgram, "image"), 0);
+            }
+            else {
+                glUseProgram(ssaoVerticalBlurShaderProgram);
+                glUniform1fv(glGetUniformLocation(ssaoVerticalBlurShaderProgram, "weight"), 5, weight);
+                glUniform1f(glGetUniformLocation(ssaoVerticalBlurShaderProgram, "texelOffsetY"), 1.0f / HEIGHT);
+                glUniform1i(glGetUniformLocation(ssaoVerticalBlurShaderProgram, "image"), 0);
+            }
+
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, ssaoFirst_iteration ? ssaoPass.colorTexture : (ssaoHorizontal ? ssaoBlurPass2.colorTexture : ssaoBlurPass1.colorTexture));
+
+            glBindVertexArray(quadVAO);
+            glDrawArrays(GL_TRIANGLES, 0, 6);
+
+            ssaoHorizontal = !ssaoHorizontal;
+            if (ssaoFirst_iteration)
+                ssaoFirst_iteration = false;
+        }
+
+        // Unbind the framebuffer after the blur passes
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+        // Determine the final blurred SSAO texture
+        GLuint ssaoBlurredTexture = ssaoHorizontal ? ssaoBlurPass2.colorTexture : ssaoBlurPass1.colorTexture;
 
         // ========== Fourth Pass: Post-Processing (e.g., SSAO, Debugging) ==========
         // Clear the screen and disable depth test for the quad
@@ -1349,7 +1476,7 @@ int main() {
         }
 
         glActiveTexture(GL_TEXTURE6);
-        glBindTexture(GL_TEXTURE_2D, ssaoPass.colorTexture);
+        glBindTexture(GL_TEXTURE_2D, ssaoBlurredTexture);
         GLint ssaoTextureLoc = glGetUniformLocation(quadShaderProgram, "ssaoTexture");
         if (ssaoTextureLoc != -1) {
             glUniform1i(ssaoTextureLoc, 6);
