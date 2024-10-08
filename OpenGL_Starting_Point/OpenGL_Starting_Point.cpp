@@ -166,7 +166,7 @@ const char* quadFragmentShaderSource = R"(
             // Display the world-space normal buffer
             vec3 normal = texture(normalMap, TexCoords).rgb;
             FragColor = vec4(normal * 0.5 + 0.5, 1.0);  // Map normals from [-1, 1] to [0, 1] for display
-        } else if (debugMode == 2) {
+        }else if (debugMode == 2) {
             float depth = texture(depthMap, TexCoords).r;
             float linearDepth = LinearizeDepth(depth);
 
@@ -177,7 +177,7 @@ const char* quadFragmentShaderSource = R"(
             depthValue = clamp(depthValue, 0.0, 1.0);
 
             FragColor = vec4(vec3(depthValue), 1.0);
-        } else if (debugMode == 3) {
+        }else if (debugMode == 3) {
             // Render the glow buffer (glowTexture)
             FragColor = texture(glowTexture, TexCoords);
         }else if (debugMode == 4) {
@@ -186,7 +186,7 @@ const char* quadFragmentShaderSource = R"(
         }else if (debugMode == 5) {
             // Render the position buffer
             FragColor = vec4(texture(positionTexture, TexCoords).rgb, 1.0);
-        } else if (debugMode == 6) {
+        }else if (debugMode == 6) {
             // Render the ssao buffer
             vec2 ssaoTexCoords = TexCoords * vec2(float(ssaoWidth) / float(screenWidth), float(ssaoHeight) / float(screenHeight));
             float ssao = texture(ssaoTexture, ssaoTexCoords).r;
@@ -1245,7 +1245,7 @@ int main() {
 
         // Blur pass - horizontal and vertical blur
         bool horizontal = true, first_iteration = true;
-        unsigned int amount = 10; // Number of blur passes
+        unsigned int amount = 6; // Number of blur passes
 
         for (unsigned int i = 0; i < amount; i++) {
             glBindFramebuffer(GL_FRAMEBUFFER, horizontal ? blurPass1.framebuffer : blurPass2.framebuffer);
