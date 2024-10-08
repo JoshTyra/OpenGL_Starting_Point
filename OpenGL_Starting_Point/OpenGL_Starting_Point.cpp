@@ -119,6 +119,10 @@ const char* quadFragmentShaderSource = R"(
         uniform float fogStart;          // Start distance for fog
         uniform float fogEnd;            // End distance for fog
         uniform float bloomIntensity;    // Bloom intensity
+        uniform int screenWidth;
+        uniform int screenHeight;
+        uniform int ssaoWidth;
+        uniform int ssaoHeight;
 
         float LinearizeDepth(float depth) {
             float z = depth * 2.0 - 1.0;  // Back to NDC
@@ -142,8 +146,8 @@ const char* quadFragmentShaderSource = R"(
             // Exponential fog factor for smoother, more gradual fog
             float fogFactor = CalculateExponentialFogFactor(linearDepth);
 
-            // Sample the ssaoTexture
-            float ssao = texture(ssaoTexture, TexCoords).r;
+            vec2 ssaoTexCoords = TexCoords * vec2(float(ssaoWidth) / float(screenWidth), float(ssaoHeight) / float(screenHeight));
+            float ssao = texture(ssaoTexture, ssaoTexCoords).r;
 
             // Apply SSAO to the scene color
             vec3 occludedColor = sceneColor * ssao;
@@ -182,9 +186,10 @@ const char* quadFragmentShaderSource = R"(
         }else if (debugMode == 5) {
             // Render the position buffer
             FragColor = vec4(texture(positionTexture, TexCoords).rgb, 1.0);
-        }else if (debugMode == 6) {
+        } else if (debugMode == 6) {
             // Render the ssao buffer
-            float ssao = texture(ssaoTexture, TexCoords).r;
+            vec2 ssaoTexCoords = TexCoords * vec2(float(ssaoWidth) / float(screenWidth), float(ssaoHeight) / float(screenHeight));
+            float ssao = texture(ssaoTexture, ssaoTexCoords).r;
             FragColor = vec4(vec3(ssao), 1.0);  // Convert the SSAO value to a grayscale color
         }
     }
@@ -327,10 +332,15 @@ const char* ssaoFragmentShaderSource = R"(
 
     uniform float radius;
     uniform float bias;
+    uniform int screenWidth;
+    uniform int screenHeight;
+    uniform int ssaoWidth;
+    uniform int ssaoHeight;
 
     void main() {
-        vec3 fragPos = texture(positionTexture, TexCoords).rgb;
-        vec3 normal = normalize(texture(normalTexture, TexCoords).rgb);
+        vec2 fullResTexCoords = TexCoords * vec2(float(screenWidth) / float(ssaoWidth), float(screenHeight) / float(ssaoHeight));
+        vec3 fragPos = texture(positionTexture, fullResTexCoords).rgb;
+        vec3 normal = normalize(texture(normalTexture, fullResTexCoords).rgb);
         vec3 randomVec = normalize(texture(noiseTexture, TexCoords * noiseScale).xyz);
 
         // Create TBN matrix
@@ -719,6 +729,8 @@ int main() {
 
     glEnable(GL_DEPTH_TEST);
 
+    glCullFace(GL_BACK); // Cull back faces (default)
+
     // Load the model
     std::vector<Mesh> meshes = loadModel(FileSystemUtils::getAssetFilePath("models/tutorial_map.obj"));
 
@@ -1033,12 +1045,33 @@ int main() {
     // Position Pass
     Framebuffer positionPass(GL_RGB32F, GL_RGB, GL_FLOAT, WIDTH, HEIGHT);
 
-    // SSAO Pass (Note the use of GL_RED formats)
-    Framebuffer ssaoPass(GL_R16F, GL_RED, GL_FLOAT, WIDTH, HEIGHT);
+    // Create a half-resolution framebuffer for SSAO
+    int ssaoWidth = WIDTH / 2;
+    int ssaoHeight = HEIGHT / 2;
+    Framebuffer ssaoPass(GL_R16F, GL_RED, GL_FLOAT, ssaoWidth, ssaoHeight);
 
-    // After creating ssaoPass
-    Framebuffer ssaoBlurPass1(GL_R16F, GL_RED, GL_FLOAT, WIDTH, HEIGHT);
-    Framebuffer ssaoBlurPass2(GL_R16F, GL_RED, GL_FLOAT, WIDTH, HEIGHT);
+    // Set texture parameters for the SSAO texture
+    glBindTexture(GL_TEXTURE_2D, ssaoPass.colorTexture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR); // For minification
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR); // For magnification
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE); // Prevent wrapping artifacts
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    Framebuffer ssaoBlurPass1(GL_R16F, GL_RED, GL_FLOAT, ssaoWidth, ssaoHeight);
+    Framebuffer ssaoBlurPass2(GL_R16F, GL_RED, GL_FLOAT, ssaoWidth, ssaoHeight);
+
+    // Set texture parameters for the SSAO blur textures
+    glBindTexture(GL_TEXTURE_2D, ssaoBlurPass1.colorTexture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR); // For minification
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR); // For magnification
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE); // Prevent wrapping artifacts
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    glBindTexture(GL_TEXTURE_2D, ssaoBlurPass2.colorTexture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR); // For minification
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR); // For magnification
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE); // Prevent wrapping artifacts
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
     // Blur Passes
     Framebuffer blurPass1(GL_RGB16F, GL_RGB, GL_FLOAT, WIDTH, HEIGHT);
@@ -1100,21 +1133,22 @@ int main() {
     std::vector<glm::vec3> ssaoKernel;
     std::uniform_real_distribution<float> randomFloats(0.0, 1.0);
     std::default_random_engine generator;
+
+    // Generate a hemisphere of samples in the positive z direction
     for (unsigned int i = 0; i < 32; ++i) {
-        glm::vec3 sample(
-            randomFloats(generator) * 2.0 - 1.0,
-            randomFloats(generator) * 2.0 - 1.0,
+        glm::vec3 sample = glm::vec3(
+            (randomFloats(generator) * 2.0 - 1.0),
+            (randomFloats(generator) * 2.0 - 1.0),
             randomFloats(generator)
         );
-        sample = glm::normalize(sample);
+        sample = normalize(sample);
         sample *= randomFloats(generator);
         float scale = float(i) / 32.0;
-
-        // Scale samples so that they're more aligned to the center of the kernel
         scale = glm::mix(0.1f, 1.0f, scale * scale);
         sample *= scale;
         ssaoKernel.push_back(sample);
     }
+
 
     // Generate noise texture
     std::vector<glm::vec3> ssaoNoise;
@@ -1273,6 +1307,7 @@ int main() {
 
 
         // SSAO Pass
+        glViewport(0, 0, ssaoWidth, ssaoHeight);
         glBindFramebuffer(GL_FRAMEBUFFER, ssaoPass.framebuffer);
         glClear(GL_COLOR_BUFFER_BIT);
         glUseProgram(ssaoShaderProgram);
@@ -1306,8 +1341,13 @@ int main() {
         glUniformMatrix4fv(glGetUniformLocation(ssaoShaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
 
         // Set noise scale
-        glm::vec2 noiseScale = glm::vec2((float)WIDTH / 4.0f, (float)HEIGHT / 4.0f);
+        glm::vec2 noiseScale = glm::vec2((float)ssaoWidth / 4.0f, (float)ssaoHeight / 4.0f);
         glUniform2fv(glGetUniformLocation(ssaoShaderProgram, "noiseScale"), 1, glm::value_ptr(noiseScale));
+
+        glUniform1i(glGetUniformLocation(ssaoShaderProgram, "screenWidth"), WIDTH);
+        glUniform1i(glGetUniformLocation(ssaoShaderProgram, "screenHeight"), HEIGHT);
+        glUniform1i(glGetUniformLocation(ssaoShaderProgram, "ssaoWidth"), ssaoWidth);
+        glUniform1i(glGetUniformLocation(ssaoShaderProgram, "ssaoHeight"), ssaoHeight);
 
         // Render the full-screen quad
         glBindVertexArray(quadVAO);
@@ -1319,6 +1359,9 @@ int main() {
         bool ssaoHorizontal = true, ssaoFirst_iteration = true;
         unsigned int ssaoBlurAmount = 2; // Number of blur passes for SSAO
 
+        // Set viewport for SSAO blur passes
+        glViewport(0, 0, ssaoWidth, ssaoHeight);
+
         for (unsigned int i = 0; i < ssaoBlurAmount; i++) {
             glBindFramebuffer(GL_FRAMEBUFFER, ssaoHorizontal ? ssaoBlurPass1.framebuffer : ssaoBlurPass2.framebuffer);
             glClear(GL_COLOR_BUFFER_BIT);
@@ -1327,13 +1370,13 @@ int main() {
             if (ssaoHorizontal) {
                 glUseProgram(ssaoHorizontalBlurShaderProgram);
                 glUniform1fv(glGetUniformLocation(ssaoHorizontalBlurShaderProgram, "weight"), 5, weight);
-                glUniform1f(glGetUniformLocation(ssaoHorizontalBlurShaderProgram, "texelOffsetX"), 1.0f / WIDTH);
+                glUniform1f(glGetUniformLocation(ssaoHorizontalBlurShaderProgram, "texelOffsetX"), 1.0f / ssaoWidth);
                 glUniform1i(glGetUniformLocation(ssaoHorizontalBlurShaderProgram, "image"), 0);
             }
             else {
                 glUseProgram(ssaoVerticalBlurShaderProgram);
                 glUniform1fv(glGetUniformLocation(ssaoVerticalBlurShaderProgram, "weight"), 5, weight);
-                glUniform1f(glGetUniformLocation(ssaoVerticalBlurShaderProgram, "texelOffsetY"), 1.0f / HEIGHT);
+                glUniform1f(glGetUniformLocation(ssaoVerticalBlurShaderProgram, "texelOffsetY"), 1.0f / ssaoHeight);
                 glUniform1i(glGetUniformLocation(ssaoVerticalBlurShaderProgram, "image"), 0);
             }
 
@@ -1350,6 +1393,9 @@ int main() {
 
         // Unbind the framebuffer after the blur passes
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+        // Reset viewport to full screen
+        glViewport(0, 0, WIDTH, HEIGHT);
 
         // Determine the final blurred SSAO texture
         GLuint ssaoBlurredTexture = ssaoHorizontal ? ssaoBlurPass2.colorTexture : ssaoBlurPass1.colorTexture;
@@ -1399,20 +1445,24 @@ int main() {
 
         // Use the post-processing (quad) shader program
         glUseProgram(quadShaderProgram);
-        glUniform1i(glGetUniformLocation(quadShaderProgram, "debugMode"), debugMode);
 
         // Set fog parameters
         glm::vec3 fogColor(0.337f, 0.349f, 0.435f); // Fog color
         float fogStart = 1.0f;
         float fogEnd = 20.0f;
         float fogDensity = 0.12f;
+        glUniform1i(glGetUniformLocation(quadShaderProgram, "debugMode"), debugMode);
+        glUniform1i(glGetUniformLocation(quadShaderProgram, "screenWidth"), WIDTH);
+        glUniform1i(glGetUniformLocation(quadShaderProgram, "screenHeight"), HEIGHT);
+        glUniform1i(glGetUniformLocation(quadShaderProgram, "ssaoWidth"), ssaoWidth);
+        glUniform1i(glGetUniformLocation(quadShaderProgram, "ssaoHeight"), ssaoHeight);
         glUniform3fv(glGetUniformLocation(quadShaderProgram, "fogColor"), 1, glm::value_ptr(fogColor));
         glUniform1f(glGetUniformLocation(quadShaderProgram, "fogDensity"), fogDensity);
         glUniform1f(glGetUniformLocation(quadShaderProgram, "fogStart"), fogStart);
         glUniform1f(glGetUniformLocation(quadShaderProgram, "fogEnd"), fogEnd);
-        glUniform1f(glGetUniformLocation(quadShaderProgram, "near"), camera.getNearPlane());  // Near plane
-        glUniform1f(glGetUniformLocation(quadShaderProgram, "far"), camera.getFarPlane());  // Far plane
-        glUniform1f(glGetUniformLocation(quadShaderProgram, "bloomIntensity"), 2.0f); // Adjust as needed
+        glUniform1f(glGetUniformLocation(quadShaderProgram, "near"), camera.getNearPlane());
+        glUniform1f(glGetUniformLocation(quadShaderProgram, "far"), camera.getFarPlane());
+        glUniform1f(glGetUniformLocation(quadShaderProgram, "bloomIntensity"), 2.0f);
 
         // Bind the textures for the quad (color, normal, depth, glow, blurred glow, position)
         glActiveTexture(GL_TEXTURE0);
