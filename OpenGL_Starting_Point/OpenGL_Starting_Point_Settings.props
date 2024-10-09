@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ImportGroup Label="PropertySheets" />
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup>
+    <IncludePath>C:\Users\JT\Desktop\glfw-3.3.8.bin.WIN64\include;C:\Users\JT\Desktop\glew-2.1.0\include;C:\Users\JT\Desktop\glm-master;C:\Users\JT\source\repos\GameEngine\GameEngine;C:\Users\JT\Desktop\assimp-master\debug-build\include;C:\Users\JT\Desktop\assimp-master\include;C:\Users\JT\Desktop\stb-master;C:\Users\JT\source\repos\FrustumDebug\FrustumDebug;C:\Users\JT\Desktop\imgui-master;C:\Users\JT\Desktop\BehaviorTree.CPP-master\include;C:\Users\JT\Desktop\bullet3-master\src;C:\Users\JT\Desktop\recastnavigation-main\Detour\Include;C:\Users\JT\Desktop\recastnavigation-main\Recast\Include;C:\Users\JT\Desktop\recastnavigation-main\DebugUtils\Include;C:\Users\JT\Desktop\recastnavigation-main\DetourTileCache\Include;C:\Users\JT\Desktop\recastnavigation-main\DetourCrowd\Include;$(IncludePath)</IncludePath>
+    <LibraryPath>C:\Users\JT\Desktop\bullet3-master\build\lib\Debug;C:\Users\JT\Desktop\assimp-master\debug-build\lib\Debug;C:\Users\JT\Desktop\BehaviorTree.CPP-master\build\Debug;C:\Users\JT\Desktop\glfw-3.3.8.bin.WIN64\lib-vc2022;C:\Users\JT\Desktop\glew-2.1.0\lib\Release\x64;C:\Users\JT\Desktop\recastnavigation-main\build\Detour\Debug;C:\Users\JT\Desktop\recastnavigation-main\build\Recast\Debug;C:\Users\JT\Desktop\recastnavigation-main\build\DebugUtils\Debug;C:\Users\JT\Desktop\recastnavigation-main\build\DetourCrowd\Debug;C:\Users\JT\Desktop\recastnavigation-main\build\DetourTileCache\Debug;$(LibraryPath)</LibraryPath>
+    <_PropertySheetDisplayName>OpenGL_Starting_Point_Debug</_PropertySheetDisplayName>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <Link>
+      <AdditionalDependencies>glew32.lib;glfw3.lib;opengl32.lib;assimp-vc143-mtd.lib;behaviortree_cppd.lib;BulletCollision_Debug.lib;BulletDynamics_Debug.lib;LinearMath_Debug.lib;Detour-d.lib;Recast-d.lib;DebugUtils-d.lib;DetourCrowd-d.lib;DetourTileCache-d.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup />
+</Project>
